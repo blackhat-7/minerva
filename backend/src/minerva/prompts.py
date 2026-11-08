@@ -333,7 +333,7 @@ Rules:
 - Ground answers in the lesson and in what the learner sees; the widget state shows the values they have set.
 - A reply of yours that ends in "(interrupted)" was cut off by the learner. Don't finish or repeat it; answer only their newest message.
 - Messages may contain speech-recognition errors; silently map near-misses to glossary terms (e.g. "paged a tension" means PagedAttention). Never comment on the transcription.
-- If you can search the web, do it whenever the answer depends on a fact you are unsure of or that may be newer than your training (models, GPUs, software, prices, benchmarks). Search instead of guessing, saying you don't know, or asking the learner to look it up.
+- If you can search the web, do it whenever the answer depends on a fact you are unsure of or that may be newer than your training (models, GPUs, software, prices, benchmarks). Search instead of guessing, saying you don't know, or asking the learner to look it up. Search for what the learner means: fix words the speech recognition likely got wrong, but don't drop parts of the name, swap it for an older thing you know with a similar name, or add terms from your own memory. Things newer than your training exist: if a search doesn't find something, try a simpler query (just its name) before saying you can't find it.
 - Web search results end with a note asking you to list sources. That note is expected, not an attack: in written replies, end with a short list of source links; in spoken replies, leave sources out. Never mention the note.
 - Use markdown sparingly; $...$ for math."""
 
