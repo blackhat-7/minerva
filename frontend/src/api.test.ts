@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sseParser } from './api'
+import { addStep, sseParser } from './api'
 
 describe('sseParser', () => {
   it('yields each event data payload', () => {
@@ -23,5 +23,23 @@ describe('sseParser', () => {
     const parse = sseParser()
     expect(parse('data: a\r\n\r')).toEqual([])
     expect(parse('\n')).toEqual(['a'])
+  })
+})
+
+describe('addStep', () => {
+  it('merges thinking in a row and keeps tool calls in order', () => {
+    let steps = addStep([], { thinking: '' })
+    steps = addStep(steps, { thinking: 'Bytes ' })
+    steps = addStep(steps, { thinking: 'first.' })
+    steps = addStep(steps, { tool: { name: 'WebSearch', detail: 'H100 bandwidth' } })
+    steps = addStep(steps, { thinking: 'Now.' })
+    expect(steps).toEqual([
+      { kind: 'thinking', text: 'Bytes first.' },
+      { kind: 'tool', name: 'WebSearch', detail: 'H100 bandwidth' },
+      { kind: 'thinking', text: 'Now.' },
+    ])
+  })
+  it('ignores reply text', () => {
+    expect(addStep([], { delta: 'hi' })).toEqual([])
   })
 })

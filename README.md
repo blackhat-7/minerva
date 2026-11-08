@@ -49,6 +49,10 @@ systemctl --user enable --now speaches    # first start downloads the models
 
 `config.example.toml` already points `[tts]` and `[stt]` at it. Any other OpenAI-compatible speech server works too; without them the app uses the browser's voice and hides the mic.
 
+### Web search
+
+Before writing a lesson, Minerva searches the web for the topic and gives the results to the model, so lessons get current facts even from a local model. It works out of the box through Exa's free hosted endpoint (no key), which sends your lesson topics to Exa. To keep searches private, set `[search] searxng_url` to your own [SearXNG](https://docs.searxng.org/) with the JSON format enabled; Minerva then fetches the result pages itself. `enabled = false` turns search off. Claude can also search on its own while writing.
+
 ### Settings
 
 The Settings page (also a sheet inside a lesson) picks, per job (lessons, tutor), which model runs it, which Claude model, and how hard local models think. The Claude model and thinking are saved on the server in `data/settings.json` and override `config.toml`; the other choices stay on the device. Everything else (providers, voice, learner profile) comes from `config.toml` and needs a restart.

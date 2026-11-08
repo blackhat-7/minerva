@@ -1,10 +1,12 @@
+import asyncio
 import json
+import threading
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from minerva import widgets
+from minerva import app, widgets
 from minerva.app import create_app
 from minerva.config import Config
 from minerva.llm import LLM
@@ -52,12 +54,18 @@ class FakeLLM:
 
     def __init__(self):
         self.replies: list = []  # str, or an Exception to raise
-        self.chunks: list = []  # stream_text deltas, or an Exception to raise mid-stream
+        self.chunks: list = []  # stream events (a str is a text delta), or an Exception to raise mid-stream
+        self.events: list[dict] = []  # thinking and tool events sent on every JSON call
+        self.gate: threading.Event | None = None  # JSON calls wait for it to be set
         self.calls: list[dict] = []
 
-    async def json(self, p, system, messages, schema, effort):
+    async def json(self, p, system, messages, schema, effort, on_event):
         self.calls.append({"provider": p.name, "system": system, "messages": [dict(m) for m in messages],
                            "effort": effort})
+        for event in self.events:
+            on_event(event)
+        while self.gate and not self.gate.is_set():
+            await asyncio.sleep(0.01)
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
@@ -68,7 +76,7 @@ class FakeLLM:
         for chunk in self.chunks:
             if isinstance(chunk, Exception):
                 raise chunk
-            yield chunk
+            yield {"delta": chunk} if isinstance(chunk, str) else chunk
 
 
 @pytest.fixture
@@ -88,6 +96,10 @@ def fake(monkeypatch) -> FakeLLM:
     f = FakeLLM()
     monkeypatch.setattr(LLM, "_openai_json", f.json)
     monkeypatch.setattr(LLM, "_stream", f.stream)
+
+    async def search(query, cfg):
+        return f"Search results for {query}."
+    monkeypatch.setattr(app, "web_search", search)
     return f
 
 

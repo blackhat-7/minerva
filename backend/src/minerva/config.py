@@ -40,10 +40,18 @@ class Learner(BaseModel):
     about: str = ""  # who is learning: background, own hardware and models
 
 
+class Search(BaseModel):
+    """Web search before writing a lesson. Default: Exa's free hosted endpoint (no key; queries go to Exa)."""
+
+    enabled: bool = True
+    searxng_url: str = ""  # your own SearXNG instead (JSON format enabled in its settings.yml)
+
+
 class Config(BaseModel):
     providers: list[Provider]
     roles: Roles
     learner: Learner = Learner()
+    search: Search = Search()
     tts: Speech | None = None
     stt: Speech | None = None
 

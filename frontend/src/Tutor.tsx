@@ -2,7 +2,7 @@
 // stream. A lesson keeps several chats (the player owns and saves them); any question can be rewound to,
 // dropping it and what followed so it can be edited and asked again.
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react'
-import { api, type ChatMessage, type TutorRequest } from './api'
+import { addStep, api, type ChatMessage, type Step, type TutorRequest } from './api'
 import { Icon } from './icons'
 import type { Chat } from './Player'
 import { interrupt as interruptAudio, narrationHeard, resumeNarration, speakStream, stop, useAudio } from './audio'
@@ -10,6 +10,7 @@ import { errorMessage, useAsync, useLatest } from './hooks'
 import { setVoiceHandlers, startListening, useListening } from './listen'
 import { Markdown } from './Markdown'
 import { isResumePhrase, sentenceSplitter, sentences } from './speech'
+import { Steps } from './Steps'
 import { Talk } from './Talk'
 import { Button, ErrorNote, IconButton } from './ui'
 
@@ -76,6 +77,8 @@ export function Tutor({
     const ctl = new AbortController()
     abort.current = ctl
     let reply = ''
+    let steps: Step[] = []
+    const answer = (content: string): ChatMessage => ({ role: 'assistant', content, ...(steps.length && { steps }) })
     // Speak each sentence as soon as it is complete, rather than after the whole reply.
     const speech = voice ? speakStream() : null
     const splitter = sentenceSplitter()
@@ -89,10 +92,12 @@ export function Tutor({
     try {
       await api.tutor(
         { lesson_id: lessonId, segment_id, context: heard ? { ...ctx, narration_heard: heard } : ctx, messages: turns, voice },
-        (delta) => {
-          reply += delta
-          setMessages([...sent, { role: 'assistant', content: reply }])
-          if (speech) splitter.push(delta).forEach(speech.push)
+        (event) => {
+          if (event.delta) {
+            reply += event.delta
+            if (speech) splitter.push(event.delta).forEach(speech.push)
+          } else steps = addStep(steps, event)
+          setMessages([...sent, answer(reply)])
         },
         ctl.signal,
       )
@@ -101,7 +106,7 @@ export function Tutor({
       if (abandoned.current === ctl) return
       // A reply the learner cut off stays, marked so the tutor answers what comes next instead of finishing it.
       if (!reply) setMessages(sent)
-      else if (ctl.signal.aborted) setMessages([...sent, { role: 'assistant', content: `${reply.trimEnd()} ${INTERRUPTED}` }])
+      else if (ctl.signal.aborted) setMessages([...sent, answer(`${reply.trimEnd()} ${INTERRUPTED}`)])
       if (!ctl.signal.aborted) setError(errorMessage(e))
     } finally {
       speech?.end() // after a barge-in this is a no-op: stop() already ended the stream
@@ -169,7 +174,7 @@ export function Tutor({
     if (last >= 0) send(messages[last].content, false, messages.slice(0, last))
   }
 
-  const streaming = busy && messages.at(-1)?.content === ''
+  const streaming = busy && messages.at(-1)?.content === '' && !messages.at(-1)?.steps
 
   const current = chats.find((c) => c.id === chatId)
 
@@ -244,13 +249,21 @@ export function Tutor({
                 </div>
               )
             }
-            if (!m.content) return null
+            if (!m.content && !m.steps) return null
             const cut = m.content.endsWith(INTERRUPTED)
+            const replying = busy && i === messages.length - 1
             return (
               <div key={i} className="flex flex-col gap-1">
-                <Markdown className="max-w-full text-[15px]">{cut ? m.content.slice(0, -INTERRUPTED.length) : m.content}</Markdown>
+                {m.steps && (
+                  <div className="mb-2">
+                    <Steps steps={m.steps} live={replying && !m.content} />
+                  </div>
+                )}
+                {m.content && (
+                  <Markdown className="max-w-full text-[15px]">{cut ? m.content.slice(0, -INTERRUPTED.length) : m.content}</Markdown>
+                )}
                 <div className="flex items-center gap-2 text-xs text-muted">
-                  {!(busy && i === messages.length - 1) && (
+                  {!replying && m.content && (
                     <button
                       onClick={() => (respeaking === i && audio.state !== 'idle' ? stop() : respeak(i))}
                       aria-label={respeaking === i && audio.state !== 'idle' ? 'Stop reading' : 'Read aloud'}

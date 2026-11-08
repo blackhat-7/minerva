@@ -36,6 +36,14 @@ Backend engineer (Python, Go), comfortable with Linux and GPUs. Runs local LLMs 
 llama.cpp. Learning ML infrastructure: training and inference at scale.
 """
 
+# Web search before writing a lesson, so the lesson gets current facts with any model.
+# By default it uses Exa's free hosted endpoint: no key or setup, but your lesson topics go to Exa,
+# and Exa may rate-limit or change it. Set searxng_url to use your own SearXNG instead
+# (enable the JSON format in its settings.yml: search.formats: [html, json]).
+[search]
+enabled = true
+# searxng_url = "http://127.0.0.1:8888"
+
 # Voice: any OpenAI-compatible speech server. Remove a section to fall back to the browser's voice / hide the mic.
 # README "Voice" sets up speaches (Kokoro TTS + Parakeet STT on CPU, so the GPU stays free for the LLM).
 [tts]

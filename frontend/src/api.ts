@@ -59,6 +59,7 @@ export type LessonRecord = {
   error: string
   diagnostic: Diagnostic | null
   lesson: Lesson | null
+  activity?: Step[] // while generating: what the model has done so far
   progress: Record<string, unknown>
 }
 
@@ -76,9 +77,25 @@ export type ExplainResult = {
   follow_up: string
 }
 
+/** What a model did on the way to its answer: thinking, and tool calls such as web searches. */
+export type Step = { kind: 'thinking'; text: string } | { kind: 'tool'; name: string; detail: string }
+
+/** One tutor stream event: reply text, thinking text ('' when only its start is known), or a tool call. */
+export type TutorEvent = { delta?: string; thinking?: string; tool?: { name: string; detail: string } }
+
+/** Folds a thinking or tool event into the steps; thinking in a row is one step.
+ *  Same as add_step in backend llm.py, which does this for lesson generation. */
+export function addStep(steps: Step[], event: TutorEvent): Step[] {
+  if (event.tool) return [...steps, { kind: 'tool', ...event.tool }]
+  if (event.thinking === undefined) return steps
+  const last = steps.at(-1)
+  if (last?.kind === 'thinking') return [...steps.slice(0, -1), { kind: 'thinking', text: last.text + event.thinking }]
+  return [...steps, { kind: 'thinking', text: event.thinking }]
+}
+
 /** `at`: the lesson step a question was asked in, for the saved history (not sent to the model).
  * `quote`: lesson text the learner selected to ask about; sent to the model as a blockquote. */
-export type ChatMessage = { role: 'user' | 'assistant'; content: string; at?: string; quote?: string }
+export type ChatMessage = { role: 'user' | 'assistant'; content: string; at?: string; quote?: string; steps?: Step[] }
 
 export type TutorRequest = {
   lesson_id: string
@@ -173,8 +190,8 @@ export const api = {
     return res.blob()
   },
 
-  /** Streams the tutor's reply, calling `onDelta` per chunk. Resolves when done; rejects on error. */
-  tutor: async (body: TutorRequest, onDelta: (text: string) => void, signal?: AbortSignal) => {
+  /** Streams the tutor's reply, calling `onEvent` per event. Resolves when done; rejects on error. */
+  tutor: async (body: TutorRequest, onEvent: (event: TutorEvent) => void, signal?: AbortSignal) => {
     const res = await fetch('/api/tutor', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -188,10 +205,10 @@ export const api = {
       const { value, done } = await reader.read()
       if (done) throw new Error('The tutor stream ended early.')
       for (const data of parser(value)) {
-        const event = JSON.parse(data) as { delta?: string; done?: boolean; error?: string }
+        const event = JSON.parse(data) as TutorEvent & { done?: boolean; error?: string }
         if (event.error) throw new Error(event.error)
-        if (event.delta) onDelta(event.delta)
         if (event.done) return reader.cancel()
+        onEvent(event)
       }
     }
   },

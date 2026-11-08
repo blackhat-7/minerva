@@ -1,4 +1,8 @@
-"""LLM calls with role fallback: `complete_json` for structured output, `stream_text` for chat.
+"""LLM calls with role fallback: `complete_json` for structured output, `stream_events` for chat.
+
+Both report what the model does on the way, as events: {"thinking": text} (thinking text, "" when only its
+start is known), {"tool": {"name", "detail"}} (a web search or page fetch, or "Write" with the output's type
+when structured output starts) and, for chat, {"delta": text}.
 
 A role is an ordered list of providers. The next provider is tried only when one is
 Unavailable (unreachable, timed out, not installed or missing its key); any other error is final.
@@ -7,6 +11,7 @@ Provider kinds:
 - openai: any OpenAI-compatible server, through the openai SDK.
 - claude_code: the user's Claude subscription through the official `claude` CLI in headless
   mode (`claude -p`). We never read or pass credentials; the CLI uses its own login.
+  It may search the web; it has no other tools.
 """
 
 import asyncio
@@ -27,10 +32,13 @@ from .config import Config, Provider
 REQUEST_TIMEOUT = 900  # seconds; local models can take minutes for a full lesson
 PROBE_TIMEOUT = 1.5
 PROBE_TTL = 30
+WEB_TOOLS = "WebSearch,WebFetch"  # Claude Code built-ins the claude CLI may use
+TOOL_DETAIL = {"WebSearch": "query", "WebFetch": "url"}  # the input shown for each tool call
 
 log = logging.getLogger(__name__)
 
 Messages = list[dict[str, str]]  # [{"role": "user" | "assistant", "content": "..."}]
+OnEvent = Callable[[dict], None]
 
 
 class LLMError(Exception):
@@ -56,6 +64,18 @@ def parse_json[T: BaseModel](text: str, model: type[T], check: Callable[[T], lis
     if problems:
         raise ValueError("\n".join(problems))
     return obj
+
+
+def add_step(steps: list[dict], event: dict) -> None:
+    """Folds a thinking or tool event into the steps shown to the learner; thinking in a row is one step.
+    The frontend's addStep (api.ts) does the same for the tutor stream."""
+    if "tool" in event:
+        steps.append({"kind": "tool", **event["tool"]})
+    elif "thinking" in event:
+        if steps and steps[-1]["kind"] == "thinking":
+            steps[-1]["text"] += event["thinking"]
+        else:
+            steps.append({"kind": "thinking", "text": event["thinking"]})
 
 
 def transcript(messages: Messages) -> str:
@@ -102,23 +122,28 @@ class LLM:
         *,
         provider: str | None = None,
         check: Callable[[T, Provider], list[str]] | None = None,
+        on_event: OnEvent | None = None,
     ) -> tuple[T, str]:
         """Returns the validated object and the name of the provider that produced it.
         `system` may depend on the provider (e.g. whether it may write HTML); `check` returns problems
-        beyond the pydantic model, which feed the single retry like validation errors do."""
+        beyond the pydantic model, which feed the single retry like validation errors do.
+        `on_event` gets the thinking and tool events as they happen."""
         failures = []
+        on_event = on_event or (lambda _: None)
         for p in self.providers(role, provider):
             try:
                 text_system = system(p) if callable(system) else system
-                return await self._json_with_retry(p, text_system, user, model, check, self.thinking.get(role)), p.name
+                effort = self.thinking.get(role)
+                return await self._json_with_retry(p, text_system, user, model, check, effort, on_event), p.name
             except Unavailable as e:
                 failures.append(f"{p.name}: {e}")
         raise Unavailable("; ".join(failures))
 
-    async def stream_text(
+    async def stream_events(
         self, role: str, system: str, messages: Messages, *, provider: str | None = None
-    ) -> AsyncIterator[str]:
-        """Yields text deltas. Falls through to the next provider only before the first delta."""
+    ) -> AsyncIterator[dict]:
+        """Yields reply text as {"delta": text} among the thinking and tool events.
+        Falls through to the next provider only before the first event."""
         failures = []
         for p in self.providers(role, provider):
             async with contextlib.aclosing(self._stream(p, system, messages, self.thinking.get(role))) as chunks:
@@ -154,12 +179,17 @@ class LLM:
         model: type[T],
         check: Callable[[T, Provider], list[str]] | None,
         effort: str | None,
+        on_event: OnEvent,
     ) -> T:
         schema = model.model_json_schema()
         messages = [{"role": "user", "content": user}]
+
+        def report(event: dict) -> None:  # providers say {"writing": True} when the output starts
+            on_event({"tool": {"name": "Write", "detail": model.__name__}} if "writing" in event else event)
+
         for attempt in range(2):
-            text = await (self._openai_json(p, system, messages, schema, effort) if p.kind == "openai" else
-                          self._claude_json(p, system, transcript(messages), schema))
+            text = await (self._openai_json(p, system, messages, schema, effort, report) if p.kind == "openai" else
+                          self._claude_json(p, system, transcript(messages), schema, report))
             try:
                 return parse_json(text, model, check and (lambda obj: check(obj, p)))
             except ValueError as e:
@@ -187,71 +217,99 @@ class LLM:
     def _extra_body(p: Provider, effort: str | None) -> dict | None:
         return ({**p.extra_body, "reasoning_effort": effort} if effort else p.extra_body) or None
 
-    async def _openai_json(self, p: Provider, system: str, messages: Messages, schema: dict, effort: str | None) -> str:
+    async def _openai_json(
+        self, p: Provider, system: str, messages: Messages, schema: dict, effort: str | None, on_event: OnEvent
+    ) -> str:
         extra = {"response_format": {"type": "json_schema", "json_schema": {"name": "output", "schema": schema}}}
+        content = reasoning = ""
+        async for event in self._openai_stream(p, system, messages, effort, **(extra if p.structured else {})):
+            if "delta" in event:
+                if not content:
+                    on_event({"writing": True})
+                content += event["delta"]
+            else:
+                reasoning += event["thinking"]
+                on_event(event)
+        # Thinking models on llama.cpp-style servers may put everything in reasoning_content.
+        return content or reasoning
+
+    async def _openai_stream(
+        self, p: Provider, system: str, messages: Messages, effort: str | None, **extra
+    ) -> AsyncIterator[dict]:
         try:
-            resp = await self._openai(p).chat.completions.create(
+            stream = await self._openai(p).chat.completions.create(
                 model=p.model,
                 messages=[{"role": "system", "content": system}, *messages],
+                stream=True,
                 extra_body=self._extra_body(p, effort),
-                **(extra if p.structured else {}),
+                **extra,
             )
         except openai.APIConnectionError as e:  # includes timeouts
             raise Unavailable(str(e)) from e
         except openai.APIStatusError as e:
             raise LLMError(f"{p.name}: {e.message}") from e
-        msg = resp.choices[0].message
-        # Thinking models on llama.cpp-style servers may put everything in reasoning_content.
-        return msg.content or (msg.model_extra or {}).get("reasoning_content") or ""
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if thinking := (delta.model_extra or {}).get("reasoning_content"):
+                yield {"thinking": thinking}
+            if delta.content:
+                yield {"delta": delta.content}
 
-    async def _claude_json(self, p: Provider, system: str, prompt: str, schema: dict) -> str:
-        proc = await self._claude(p, system, ["--output-format", "json", "--json-schema", json.dumps(schema)])
+    async def _claude_json(self, p: Provider, system: str, prompt: str, schema: dict, on_event: OnEvent) -> str:
+        result = {}
         try:
-            out, err = await asyncio.wait_for(proc.communicate(prompt.encode()), REQUEST_TIMEOUT)
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                events = self._claude_stream(p, system, prompt, ["--json-schema", json.dumps(schema)])
+                async with contextlib.aclosing(events):
+                    async for event in events:
+                        if "result" in event:
+                            result = event["result"]
+                        elif "delta" not in event:
+                            on_event(event)
         except TimeoutError:
-            proc.kill()
-            await proc.wait()
             raise Unavailable("claude CLI timed out") from None
-        if not out.strip():
-            raise LLMError(f"claude CLI exited {proc.returncode}: {err.decode(errors='replace')[-500:]}")
-        result = json.loads(out)
-        if result.get("is_error"):
-            raise LLMError(f"claude CLI: {result.get('result') or result.get('subtype')}")
         structured = result.get("structured_output")
         return json.dumps(structured) if structured is not None else result.get("result", "")
 
-    async def _stream(self, p: Provider, system: str, messages: Messages, effort: str | None) -> AsyncIterator[str]:
+    async def _stream(self, p: Provider, system: str, messages: Messages, effort: str | None) -> AsyncIterator[dict]:
         if p.kind == "openai":
-            try:
-                stream = await self._openai(p).chat.completions.create(
-                    model=p.model,
-                    messages=[{"role": "system", "content": system}, *messages],
-                    stream=True,
-                    extra_body=self._extra_body(p, effort),
-                )
-            except openai.APIConnectionError as e:
-                raise Unavailable(str(e)) from e
-            except openai.APIStatusError as e:
-                raise LLMError(f"{p.name}: {e.message}") from e
-            async for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-            return
+            events = self._openai_stream(p, system, messages, effort)
+        else:
+            events = self._claude_stream(p, system, transcript(messages), [])
+        async with contextlib.aclosing(events):
+            async for event in events:
+                if "result" not in event:
+                    yield event
 
-        proc = await self._claude(
-            p, system, ["--output-format", "stream-json", "--include-partial-messages", "--verbose"], stderr=False
-        )
+    async def _claude_stream(self, p: Provider, system: str, prompt: str, args: list[str]) -> AsyncIterator[dict]:
+        """Runs the CLI with streamed output. Yields its events, then {"result": <the CLI's result event>}."""
+        proc = await self._claude(p, system, ["--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                                              *args])
         result = None
         try:
-            proc.stdin.write(transcript(messages).encode())
+            proc.stdin.write(prompt.encode())
             await proc.stdin.drain()
             proc.stdin.close()
             async for line in proc.stdout:
                 event = json.loads(line)
                 if event["type"] == "stream_event":
                     e = event["event"]
-                    if e["type"] == "content_block_delta" and e["delta"]["type"] == "text_delta":
-                        yield e["delta"]["text"]
+                    block = e.get("content_block", {})
+                    if e["type"] == "content_block_start" and block["type"] == "thinking":
+                        yield {"thinking": ""}  # Claude may keep the text to itself; the step still shows
+                    elif e["type"] == "content_block_start" and block.get("name") == "StructuredOutput":
+                        yield {"writing": True}
+                    elif e["type"] == "content_block_delta" and e["delta"]["type"] == "text_delta":
+                        yield {"delta": e["delta"]["text"]}
+                    elif e["type"] == "content_block_delta" and e["delta"]["type"] == "thinking_delta":
+                        yield {"thinking": e["delta"]["thinking"]}
+                elif event["type"] == "assistant":  # whole messages, with each tool call's complete input
+                    for block in event["message"]["content"]:
+                        if block["type"] == "tool_use" and block["name"] in TOOL_DETAIL:
+                            detail = str(block["input"].get(TOOL_DETAIL[block["name"]], ""))
+                            yield {"tool": {"name": block["name"], "detail": detail}}
                 elif event["type"] == "result":
                     result = event
             await proc.wait()
@@ -261,9 +319,12 @@ class LLM:
                 await proc.wait()
         if result is None or result.get("is_error"):
             detail = result and (result.get("result") or result.get("subtype"))
-            raise LLMError(f"claude CLI failed: {detail or f'exit {proc.returncode}'}")
+            if not detail:
+                detail = f"exit {proc.returncode}: {(await proc.stderr.read()).decode(errors='replace')[-500:]}"
+            raise LLMError(f"claude CLI failed: {detail}")
+        yield {"result": result}
 
-    async def _claude(self, p: Provider, system: str, args: list[str], stderr: bool = True):
+    async def _claude(self, p: Provider, system: str, args: list[str]):
         exe = shutil.which("claude")
         if not exe:
             raise Unavailable("claude CLI not found on PATH")
@@ -272,14 +333,16 @@ class LLM:
             exe, "-p", "--model", p.model,
             "--setting-sources", "project",  # with the empty cwd: none of the user's settings, hooks or plugins
             "--system-prompt", system,
-            "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+            # Web search only: no file or shell access. --allowedTools approves them without a prompt.
+            "--tools", WEB_TOOLS, "--allowedTools", WEB_TOOLS,
+            "--strict-mcp-config", "--no-session-persistence",
             *args,
             cwd=self.workdir,
             # --setting-sources alone still loads ~/.claude/CLAUDE.md; keep the user's memory out of lessons.
             env={**os.environ, "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE if stderr else asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,  # read only on failure; the CLI writes little to it
             limit=1 << 24,  # stream-json lines carry whole messages
         )
 

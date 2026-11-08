@@ -38,15 +38,15 @@ def test_stream_falls_through_before_first_chunk(config, fake, tmp_path, monkeyp
     async def stream(self, p, system, messages, effort):
         if p.name == "a":
             raise Unavailable("down")
-        yield "hi"
+        yield {"delta": "hi"}
 
     monkeypatch.setattr(LLM, "_stream", stream)
     config.roles.tutor = ["a", "b"]
 
     async def collect():
-        return [c async for c in LLM(config, tmp_path).stream_text("tutor", "sys", [{"role": "user", "content": "q"}])]
+        return [e async for e in LLM(config, tmp_path).stream_events("tutor", "sys", [{"role": "user", "content": "q"}])]
 
-    assert asyncio.run(collect()) == ["hi"]
+    assert asyncio.run(collect()) == [{"delta": "hi"}]
 
 
 def test_check_lesson_rejects_unknown_widgets_and_disallowed_html(config):
@@ -100,7 +100,15 @@ with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
     f.write(json.dumps({{"args": args, "stdin": sys.stdin.read(), "cwd": os.getcwd(),
                         "no_memory": os.environ.get("CLAUDE_CODE_DISABLE_CLAUDE_MDS")}}) + "\\n")
 fail = os.environ.get("FAKE_CLAUDE_FAIL") == "1"
-if args[args.index("--output-format") + 1] == "json":
+def tool(name, **input):
+    return {{"type": "tool_use", "id": "t", "name": name, "input": input}}
+if "--json-schema" in args:
+    print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_start", "index": 0,
+                       "content_block": {{"type": "thinking", "thinking": ""}}}}}}))
+    print(json.dumps({{"type": "assistant", "message": {{"content": [tool("WebSearch", query="rooflines", mode="x")]}}}}))
+    print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_start", "index": 1,
+                       "content_block": tool("StructuredOutput")}}}}))
+    print(json.dumps({{"type": "assistant", "message": {{"content": [tool("StructuredOutput", profile="structured")]}}}}))
     print(json.dumps({{"type": "result", "is_error": fail, "result": "rate limited" if fail else "",
                        "structured_output": None if fail else {{"profile": "structured"}}}}))
 else:
@@ -134,15 +142,20 @@ def fake_claude(tmp_path, monkeypatch):
 
 def test_claude_json(claude_config, fake_claude, tmp_path):
     llm = LLM(claude_config, tmp_path / "cwd")
-    result, used = asyncio.run(llm.complete_json("lesson", "be brief", "a long prompt", prompts.Profile))
+    events = []
+    result, used = asyncio.run(
+        llm.complete_json("lesson", "be brief", "a long prompt", prompts.Profile, on_event=events.append)
+    )
     assert (result.profile, used) == ("structured", "claude")
+    assert events == [{"thinking": ""}, {"tool": {"name": "WebSearch", "detail": "rooflines"}},
+                      {"tool": {"name": "Write", "detail": "Profile"}}]
 
     [call] = fake_claude()
     args = call["args"]
     assert call["stdin"] == "a long prompt" and call["cwd"] == str(tmp_path / "cwd") and call["no_memory"] == "1"
     assert args[args.index("--system-prompt") + 1] == "be brief"
     assert args[args.index("--model") + 1] == "claude-haiku-5-5"
-    assert args[args.index("--tools") + 1] == ""
+    assert args[args.index("--tools") + 1] == args[args.index("--allowedTools") + 1] == "WebSearch,WebFetch"
     assert args[args.index("--setting-sources") + 1] == "project"
     assert json.loads(args[args.index("--json-schema") + 1]) == prompts.Profile.model_json_schema()
     assert "--no-session-persistence" in args and "--strict-mcp-config" in args and "--bare" not in args
@@ -153,9 +166,9 @@ def test_claude_stream_and_transcript(claude_config, fake_claude, tmp_path):
     messages = [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}, {"role": "user", "content": "q2"}]
 
     async def collect():
-        return [c async for c in llm.stream_text("tutor", "sys", messages)]
+        return [e async for e in llm.stream_events("tutor", "sys", messages)]
 
-    assert asyncio.run(collect()) == ["Hel", "lo"]
+    assert asyncio.run(collect()) == [{"delta": "Hel"}, {"delta": "lo"}]
     stdin = fake_claude()[0]["stdin"]
     assert "[assistant]\na1" in stdin and stdin.endswith("[user]\nq2")
 
@@ -191,3 +204,36 @@ def test_claude_model_chosen_per_role(claude_config, tmp_path):
     [p] = llm.providers("lesson")
     assert p.model == "claude-opus-5-5"
     assert llm.providers("tutor")[0].model == claude_config.providers[0].model
+
+
+def test_openai_json_streams_thinking(config, tmp_path, monkeypatch):
+    from openai.types.chat import ChatCompletionChunk
+
+    def chunk(**delta):
+        return ChatCompletionChunk.model_validate({"id": "c", "object": "chat.completion.chunk", "created": 0,
+                                                   "model": "m", "choices": [{"index": 0, "delta": delta}]})
+
+    replies = []
+
+    async def create(**kwargs):
+        assert kwargs["stream"] is True and "response_format" in kwargs
+
+        async def chunks():
+            for c in replies.pop(0):
+                yield c
+        return chunks()
+
+    llm = LLM(config, tmp_path)
+    client = llm._openai(config.provider("a"))
+    monkeypatch.setattr(client.chat.completions, "create", create)
+
+    events = []
+    replies.append([chunk(reasoning_content="Bytes "), chunk(reasoning_content="first."), chunk(content='{"profile": '),
+                    chunk(content='"p"}')])
+    result, _ = asyncio.run(llm.complete_json("lesson", "s", "u", prompts.Profile, on_event=events.append))
+    assert result.profile == "p"
+    assert events == [{"thinking": "Bytes "}, {"thinking": "first."}, {"tool": {"name": "Write", "detail": "Profile"}}]
+
+    replies.append([chunk(reasoning_content='{"profile": "only in reasoning"}')])  # some servers put it all there
+    result, _ = asyncio.run(llm.complete_json("lesson", "s", "u", prompts.Profile))
+    assert result.profile == "only in reasoning"

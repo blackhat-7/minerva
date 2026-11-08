@@ -1,6 +1,7 @@
 """HTTP API (docs/api.md) and the built frontend."""
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -19,7 +20,8 @@ from pydantic import BaseModel, Field
 from . import glossary, prompts
 from .config import REPO, Config, Speech, config_path, data_dir, load_config
 from .lesson import Diagnostic, Lesson, Question, SegmentEdit
-from .llm import LLM, LLMError, Unavailable
+from .llm import LLM, LLMError, Unavailable, add_step
+from .search import web_search
 from .store import Store
 from .widgets import check_lesson, check_segments, load_catalog
 
@@ -135,6 +137,7 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         prefs_path.write_text(json.dumps(prefs, indent=1))
     about = config.learner.about
     tasks: set[asyncio.Task] = set()  # keeps background generations referenced until done
+    activity: dict[str, list[dict]] = {}  # lesson id -> thinking and tool steps so far, while it generates
 
     app = FastAPI(title="Minerva")
     app.state.llm = llm
@@ -231,28 +234,36 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         return store.create_lesson(topic, used, diagnostic.model_dump())
 
     async def generate(lesson_id: str, topic: str, questions: list[Question], answers: list[str], provider: str | None):
+        steps = activity[lesson_id] = []
+        on_event = functools.partial(add_step, steps)
         try:
             profile = ""
             if answers:
                 result, _ = await llm.complete_json(
                     "lesson", prompts.PROFILE_SYSTEM, prompts.profile_user(topic, questions, answers), prompts.Profile,
-                    provider=provider,
+                    provider=provider, on_event=on_event,
                 )
                 profile = result.profile
                 log.info("lesson %s learner profile: %s", lesson_id, profile)
             catalog = load_catalog()
+            if config.search.enabled:
+                on_event({"tool": {"name": "WebSearch", "detail": topic}})
+            sources = await web_search(topic, config.search)
             lesson, used = await llm.complete_json(
                 "lesson",
                 lambda p: prompts.lesson_system(catalog, p.html),
-                prompts.lesson_user(topic, profile, about),
+                prompts.lesson_user(topic, profile, about, sources),
                 Lesson,
                 provider=provider,
                 check=lambda lesson, p: check_lesson(lesson, p, catalog),
+                on_event=on_event,
             )
             store.update_lesson(lesson_id, status="ready", error="", provider=used, lesson=lesson.model_dump())
         except Exception as e:
             log.exception("generating lesson %s failed", lesson_id)
             store.update_lesson(lesson_id, status="failed", error=str(e) or type(e).__name__)
+        finally:
+            del activity[lesson_id]
 
     @app.post("/api/lessons/{lesson_id}/generate", status_code=202)
     async def start_generation(lesson_id: str, body: GenerateBody) -> dict:
@@ -309,7 +320,8 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
 
     @app.get("/api/lessons/{lesson_id}")
     async def get_lesson(lesson_id: str) -> dict:
-        return lesson_or_404(lesson_id)
+        record = lesson_or_404(lesson_id)
+        return {**record, "activity": activity[lesson_id]} if lesson_id in activity else record
 
     @app.put("/api/lessons/{lesson_id}/progress", status_code=204)
     async def save_progress(lesson_id: str, body: ProgressBody) -> None:
@@ -369,8 +381,8 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
 
         async def events():
             try:
-                async for delta in llm.stream_text("tutor", system, messages, provider=body.provider):
-                    yield f"data: {json.dumps({'delta': delta})}\n\n"
+                async for event in llm.stream_events("tutor", system, messages, provider=body.provider):
+                    yield f"data: {json.dumps(event)}\n\n"
                 yield 'data: {"done": true}\n\n'
             except Exception as e:
                 log.exception("tutor stream failed")

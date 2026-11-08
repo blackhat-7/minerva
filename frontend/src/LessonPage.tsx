@@ -1,13 +1,14 @@
 // /lesson/:id — diagnostic, then generation (with reviews while you wait), then the player.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
-import { api, type LessonRecord } from './api'
+import { api, type LessonRecord, type Step } from './api'
 import { errorMessage, useAsync } from './hooks'
 import { Icon } from './icons'
 import type { Question } from './lesson'
 import { Markdown } from './Markdown'
 import { Player } from './Player'
 import { ReviewDeck } from './Review'
+import { Steps } from './Steps'
 import { Button, ErrorNote, Eyebrow, field, Panel, Skeleton, Spinner } from './ui'
 
 const POLL_MS = 2000
@@ -59,7 +60,7 @@ export default function LessonPage({ id }: { id: string }) {
   if (r.status === 'generating')
     return (
       <Shell>
-        <Generating topic={r.topic} />
+        <Generating topic={r.topic} activity={r.activity ?? []} />
       </Shell>
     )
 
@@ -191,7 +192,7 @@ function DiagnosticAnswer({
   )
 }
 
-function Generating({ topic }: { topic: string }) {
+function Generating({ topic, activity }: { topic: string; activity: Step[] }) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -216,6 +217,11 @@ function Generating({ topic }: { topic: string }) {
           {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')} · usually 1–3 minutes
         </p>
       </div>
+      {activity.length > 0 && (
+        <div className="max-h-72 overflow-y-auto rounded-2xl bg-white/[0.03] px-4 py-3">
+          <Steps steps={activity} live />
+        </div>
+      )}
       <div>
         <h2 className="mb-3 text-sm text-muted">Meanwhile, a quick review</h2>
         <ReviewDeck compact />

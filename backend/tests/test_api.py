@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from datetime import datetime
 
 from conftest import choice, lesson_json, wait_for
@@ -46,6 +48,7 @@ def test_lesson_flow(client, fake):
     profile_prompt, lesson_prompt = fake.calls[1]["messages"][0]["content"], fake.calls[2]["messages"][0]["content"]
     assert "(left empty: does not know)" in profile_prompt
     assert "shaky on ridge points" in lesson_prompt
+    assert "<sources>\nSearch results for Rooflines.\n</sources>" in lesson_prompt
     assert "roofline" in fake.calls[2]["system"]  # widget catalog in the lesson prompt
     assert client.get("/api/lessons").json()[0]["title"] == "Rooflines"
 
@@ -116,13 +119,34 @@ def test_grade_free_answer(client, fake):
     assert r.status_code == 400
 
 
+def test_generation_shows_its_steps_while_running(client, fake):
+    record = new_lesson(client, fake)
+    fake.gate = threading.Event()
+    fake.events = [{"thinking": "Start with "}, {"thinking": "bytes."}, {"tool": {"name": "WebFetch", "detail": "u"}}]
+    fake.replies.append(lesson_json())
+    client.post(f"/api/lessons/{record['id']}/generate", json={"answers": []})
+    for _ in range(200):
+        activity = client.get(f"/api/lessons/{record['id']}").json().get("activity")
+        if activity and activity[-1]["kind"] == "tool" and activity[-1]["name"] == "WebFetch":
+            break
+        time.sleep(0.01)
+    assert activity == [
+        {"kind": "tool", "name": "WebSearch", "detail": "Rooflines"},
+        {"kind": "thinking", "text": "Start with bytes."},
+        {"kind": "tool", "name": "WebFetch", "detail": "u"},
+    ]
+    fake.gate.set()
+    done = wait_for(client, record["id"])
+    assert done["status"] == "ready" and "activity" not in done
+
+
 def sse(text: str) -> list[dict]:
     return [json.loads(line.removeprefix("data: ")) for line in text.splitlines() if line.startswith("data: ")]
 
 
 def test_tutor_streams_sse(client, fake):
     lesson_id = ready_lesson(client, fake)
-    fake.chunks = ["Think about ", "bytes."]
+    fake.chunks = [{"thinking": "hmm"}, {"tool": {"name": "WebSearch", "detail": "H100"}}, "Think about ", "bytes."]
     body = {
         "lesson_id": lesson_id,
         "segment_id": "s2",
@@ -133,7 +157,8 @@ def test_tutor_streams_sse(client, fake):
     }
     r = client.post("/api/tutor", json=body)
     assert r.headers["content-type"].startswith("text/event-stream")
-    assert sse(r.text) == [{"delta": "Think about "}, {"delta": "bytes."}, {"done": True}]
+    assert sse(r.text) == [{"thinking": "hmm"}, {"tool": {"name": "WebSearch", "detail": "H100"}},
+                           {"delta": "Think about "}, {"delta": "bytes."}, {"done": True}]
 
     call = fake.calls[-1]
     assert "HBM: High-bandwidth memory." in call["system"]
