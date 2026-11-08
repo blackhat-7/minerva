@@ -77,11 +77,14 @@ html = true
 [roles]
 lesson = ["claude", "local"]
 tutor = ["local"]
+
+[profiles.me]
+name = "Me"
 """)
     monkeypatch.setenv("MINERVA_CONFIG", str(path))
     config = load_config()
     assert config.provider("local").extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
-    assert config.provider("claude").html and config.tts is None and config.learner.about == ""
+    assert config.provider("claude").html and config.tts is None and config.profiles["me"].providers == ["local", "claude"]
 
     path.write_text(path.read_text().replace('tutor = ["local"]', 'tutor = ["ghost"]'))
     with pytest.raises(ValueError, match="unknown providers"):
@@ -124,6 +127,7 @@ def claude_config(config):
     return config.model_validate({
         "providers": [{"name": "claude", "kind": "claude_code", "model": "claude-haiku-5-5"}],
         "roles": {"lesson": ["claude"], "tutor": ["claude"]},
+        "profiles": {"me": {"name": "Me"}},
     })
 
 

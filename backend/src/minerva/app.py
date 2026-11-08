@@ -9,16 +9,16 @@ import os
 import random
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import openai
 import uvicorn
-from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import glossary, prompts
-from .config import REPO, Config, Speech, config_path, data_dir, load_config
+from .config import REPO, Config, Profile, Speech, config_path, data_dir, load_config
 from .lesson import Diagnostic, Lesson, Question, SegmentEdit
 from .llm import LLM, LLMError, Unavailable, add_step
 from .search import web_search
@@ -98,6 +98,7 @@ class ThinkingBody(BaseModel):
 
 class TtsBody(BaseModel):
     text: str = Field(min_length=1)
+    voice: str = ""  # one of tts.voices; "" = the default voice
 
 
 class NewCard(BaseModel):
@@ -125,7 +126,7 @@ def speech_client(s: Speech) -> openai.AsyncOpenAI:
 def create_app(config: Config | None = None, data: Path | None = None) -> FastAPI:
     config = config or load_config()
     data = data or data_dir()
-    store = Store(data / "minerva.db")
+    store = Store(data / "minerva.db", owner=next(iter(config.profiles)))
     store.fail_interrupted()
     # Settings changed in the app (the settings page), kept apart from config.toml.
     prefs_path = data / "settings.json"
@@ -135,7 +136,6 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     def save_prefs() -> None:
         prefs.update(thinking=llm.thinking, claude_models=llm.claude_models)
         prefs_path.write_text(json.dumps(prefs, indent=1))
-    about = config.learner.about
     tasks: set[asyncio.Task] = set()  # keeps background generations referenced until done
     activity: dict[str, list[dict]] = {}  # lesson id -> thinking and tool steps so far, while it generates
 
@@ -147,58 +147,94 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     async def llm_error(_: Request, e: LLMError) -> JSONResponse:
         return JSONResponse({"detail": str(e)}, status_code=503 if isinstance(e, Unavailable) else 502)
 
-    def check_provider(name: str | None) -> None:
+    def visible_profiles(remote_user: str) -> dict[str, Profile]:
+        """The profiles a request may use. Behind the auth proxy (Remote-User set) only the login's own."""
+        if not remote_user:
+            return config.profiles
+        mine = {pid: p for pid, p in config.profiles.items() if p.login == remote_user}
+        if not mine:
+            raise HTTPException(403, f"no profile for login {remote_user}")
+        return mine
+
+    def profile_id(x_profile: str = Header(""), remote_user: str = Header("")) -> str:
+        """The learner a request is for. With one profile the header may be left out."""
+        mine = visible_profiles(remote_user)
+        if x_profile in mine:
+            return x_profile
+        if not x_profile and len(mine) == 1:
+            return next(iter(mine))
+        if x_profile in config.profiles:
+            raise HTTPException(403, f"login {remote_user} may not use profile {x_profile!r}")
+        raise HTTPException(400, f"unknown profile {x_profile!r}" if x_profile else "no profile chosen")
+
+    Me = Annotated[str, Depends(profile_id)]
+
+    def allowed(me: str) -> list[str]:
+        return config.profiles[me].providers
+
+    def about(me: str) -> str:
+        return config.profiles[me].about
+
+    def check_provider(name: str | None, me: str) -> None:
         if name and name not in {p.name for p in config.providers}:
             raise HTTPException(400, f"unknown provider {name!r}")
+        if name and name not in allowed(me):
+            raise HTTPException(403, f"provider {name!r} is not available to this profile")
 
-    def lesson_or_404(lesson_id: str) -> dict:
-        record = store.get_lesson(lesson_id)
+    def lesson_or_404(me: str, lesson_id: str) -> dict:
+        record = store.get_lesson(me, lesson_id)
         if record is None:
             raise HTTPException(404, "lesson not found")
         return record
 
-    def ready_lesson(lesson_id: str) -> tuple[dict, Lesson]:
-        record = lesson_or_404(lesson_id)
+    def ready_lesson(me: str, lesson_id: str) -> tuple[dict, Lesson]:
+        record = lesson_or_404(me, lesson_id)
         if record["lesson"] is None:
             raise HTTPException(409, f"lesson is {record['status']}, not ready")
         return record, Lesson.model_validate(record["lesson"])
 
-    # --- status ---
+    # --- profiles and status ---
+
+    @app.get("/api/profiles")
+    async def profiles(remote_user: str = Header("")) -> list[dict]:
+        return [{"id": pid, "name": p.name} for pid, p in visible_profiles(remote_user).items()]
 
     @app.get("/api/status")
-    async def status() -> dict:
-        available = await asyncio.gather(*(llm.available(p) for p in config.providers))
+    async def status(me: Me) -> dict:
+        providers = [p for p in config.providers if p.name in allowed(me)]
+        available = await asyncio.gather(*(llm.available(p) for p in providers))
         return {
             "providers": [
                 {"name": p.name, "model": p.model, "available": ok, "html": p.html}
-                for p, ok in zip(config.providers, available, strict=True)
+                for p, ok in zip(providers, available, strict=True)
             ],
-            "roles": config.roles.model_dump(),
+            "roles": config.roles_for(config.profiles[me]),
             "tts": config.tts is not None,
             "stt": config.stt is not None,
-            "due": store.due_count(),
+            "due": store.due_count(me),
         }
 
     @app.get("/api/settings")
-    async def settings() -> dict:
+    async def settings(me: Me) -> dict:
         """The server's configuration, for the settings page. No keys: only which env var holds one."""
-        available = await asyncio.gather(*(llm.available(p) for p in config.providers))
+        providers = [p for p in config.providers if p.name in allowed(me)]
+        available = await asyncio.gather(*(llm.available(p) for p in providers))
 
         def speech(s: Speech | None) -> dict | None:
-            return s and s.model_dump(include={"base_url", "model", "voice"})
+            return s and s.model_dump(include={"base_url", "model", "voice", "voices"})
 
         return {
             "providers": [
                 {**p.model_dump(include={"name", "kind", "model", "base_url", "html", "extra_body"}), "available": ok}
-                for p, ok in zip(config.providers, available, strict=True)
+                for p, ok in zip(providers, available, strict=True)
             ],
-            "roles": config.roles.model_dump(),
+            "roles": config.roles_for(config.profiles[me]),
             "tts": speech(config.tts),
             "stt": speech(config.stt),
             "thinking": llm.thinking,
             "claude_models": llm.claude_models,
             "claude_model_options": CLAUDE_MODELS,
-            "learner": config.learner.about.strip(),
+            "learner": about(me).strip(),
             "config_path": str(config_path()),
         }
 
@@ -223,17 +259,20 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     # --- lessons ---
 
     @app.post("/api/lessons")
-    async def create_lesson(body: NewLesson) -> dict:
-        check_provider(body.provider)
+    async def create_lesson(body: NewLesson, me: Me) -> dict:
+        check_provider(body.provider, me)
         topic = body.topic.strip()
         if not topic:
             raise HTTPException(422, "topic is empty")
         diagnostic, used = await llm.complete_json(
-            "lesson", prompts.DIAGNOSTIC_SYSTEM, prompts.diagnostic_user(topic, about), Diagnostic, provider=body.provider
+            "lesson", prompts.DIAGNOSTIC_SYSTEM, prompts.diagnostic_user(topic, about(me)), Diagnostic,
+            provider=body.provider, allowed=allowed(me),
         )
-        return store.create_lesson(topic, used, diagnostic.model_dump())
+        return store.create_lesson(me, topic, used, diagnostic.model_dump())
 
-    async def generate(lesson_id: str, topic: str, questions: list[Question], answers: list[str], provider: str | None):
+    async def generate(
+        me: str, lesson_id: str, topic: str, questions: list[Question], answers: list[str], provider: str | None
+    ):
         steps = activity[lesson_id] = []
         on_event = functools.partial(add_step, steps)
         try:
@@ -241,7 +280,7 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
             if answers:
                 result, _ = await llm.complete_json(
                     "lesson", prompts.PROFILE_SYSTEM, prompts.profile_user(topic, questions, answers), prompts.Profile,
-                    provider=provider, on_event=on_event,
+                    provider=provider, allowed=allowed(me), on_event=on_event,
                 )
                 profile = result.profile
                 log.info("lesson %s learner profile: %s", lesson_id, profile)
@@ -252,9 +291,10 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
             lesson, used = await llm.complete_json(
                 "lesson",
                 lambda p: prompts.lesson_system(catalog, p.html),
-                prompts.lesson_user(topic, profile, about, sources),
+                prompts.lesson_user(topic, profile, about(me), sources),
                 Lesson,
                 provider=provider,
+                allowed=allowed(me),
                 check=lambda lesson, p: check_lesson(lesson, p, catalog),
                 on_event=on_event,
             )
@@ -266,25 +306,25 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
             del activity[lesson_id]
 
     @app.post("/api/lessons/{lesson_id}/generate", status_code=202)
-    async def start_generation(lesson_id: str, body: GenerateBody) -> dict:
-        check_provider(body.provider)
-        record = lesson_or_404(lesson_id)
+    async def start_generation(lesson_id: str, body: GenerateBody, me: Me) -> dict:
+        check_provider(body.provider, me)
+        record = lesson_or_404(me, lesson_id)
         if record["status"] == "generating":
             raise HTTPException(409, "already generating")
         questions = Diagnostic.model_validate(record["diagnostic"]).questions
         if body.answers and len(body.answers) != len(questions):
             raise HTTPException(422, f"expected {len(questions)} answers or none")
         store.update_lesson(lesson_id, status="generating", error="")
-        task = asyncio.create_task(generate(lesson_id, record["topic"], questions, body.answers, body.provider))
+        task = asyncio.create_task(generate(me, lesson_id, record["topic"], questions, body.answers, body.provider))
         tasks.add(task)
         task.add_done_callback(tasks.discard)
-        return store.get_lesson(lesson_id)
+        return store.get_lesson(me, lesson_id)
 
     @app.post("/api/lessons/{lesson_id}/segments/{segment_id}/edit")
-    async def edit_segment(lesson_id: str, segment_id: str, body: EditBody) -> dict:
+    async def edit_segment(lesson_id: str, segment_id: str, body: EditBody, me: Me) -> dict:
         """Rewrites one segment as the learner asks, optionally adding a new segment after it."""
-        check_provider(body.provider)
-        record, lesson = ready_lesson(lesson_id)
+        check_provider(body.provider, me)
+        record, lesson = ready_lesson(me, lesson_id)
         segment = next((s for s in lesson.segments if s.id == segment_id), None)
         if segment is None:
             raise HTTPException(404, f"no segment {segment_id!r}")
@@ -292,13 +332,14 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         result, _ = await llm.complete_json(
             "lesson",
             lambda p: prompts.edit_system(catalog, p.html),
-            prompts.edit_user(record["topic"], lesson, segment, body.instruction.strip(), about),
+            prompts.edit_user(record["topic"], lesson, segment, body.instruction.strip(), about(me)),
             SegmentEdit,
             provider=body.provider,
+            allowed=allowed(me),
             check=lambda edit, p: check_segments(edit.segments, p, catalog),
         )
         # Re-read: the lesson may have changed while the model worked (another edit).
-        _, lesson = ready_lesson(lesson_id)
+        _, lesson = ready_lesson(me, lesson_id)
         at = next((i for i, s in enumerate(lesson.segments) if s.id == segment_id), None)
         if at is None:
             raise HTTPException(409, f"segment {segment_id!r} was removed meanwhile")
@@ -312,76 +353,78 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         known = {g.term.lower() for g in lesson.glossary}
         lesson.glossary += [g for g in result.glossary if g.term.lower() not in known]
         store.update_lesson(lesson_id, lesson=lesson.model_dump())
-        return store.get_lesson(lesson_id)
+        return store.get_lesson(me, lesson_id)
 
     @app.get("/api/lessons")
-    async def list_lessons() -> list[dict]:
-        return store.list_lessons()
+    async def list_lessons(me: Me) -> list[dict]:
+        return store.list_lessons(me)
 
     @app.get("/api/lessons/{lesson_id}")
-    async def get_lesson(lesson_id: str) -> dict:
-        record = lesson_or_404(lesson_id)
+    async def get_lesson(lesson_id: str, me: Me) -> dict:
+        record = lesson_or_404(me, lesson_id)
         return {**record, "activity": activity[lesson_id]} if lesson_id in activity else record
 
     @app.put("/api/lessons/{lesson_id}/progress", status_code=204)
-    async def save_progress(lesson_id: str, body: ProgressBody) -> None:
-        lesson_or_404(lesson_id)
+    async def save_progress(lesson_id: str, body: ProgressBody, me: Me) -> None:
+        lesson_or_404(me, lesson_id)
         store.update_lesson(lesson_id, progress=body.progress)
 
     @app.delete("/api/lessons/{lesson_id}", status_code=204)
-    async def delete_lesson(lesson_id: str) -> None:
-        lesson_or_404(lesson_id)
+    async def delete_lesson(lesson_id: str, me: Me) -> None:
+        lesson_or_404(me, lesson_id)
         store.delete_lesson(lesson_id)
 
     @app.post("/api/lessons/{lesson_id}/complete", status_code=204)
-    async def complete_lesson(lesson_id: str) -> None:
-        record, lesson = ready_lesson(lesson_id)
-        store.complete_lesson(lesson_id, [c.model_dump() for c in lesson.cards], record["topic"])
+    async def complete_lesson(lesson_id: str, me: Me) -> None:
+        record, lesson = ready_lesson(me, lesson_id)
+        store.complete_lesson(me, lesson_id, [c.model_dump() for c in lesson.cards], record["topic"])
 
     # --- grading ---
 
     @app.post("/api/grade")
-    async def grade(body: GradeBody) -> prompts.Grade:
+    async def grade(body: GradeBody, me: Me) -> prompts.Grade:
         if body.question.kind != "free":
             raise HTTPException(400, "only free questions are graded here")
-        check_provider(body.provider)
-        record = lesson_or_404(body.lesson_id)
+        check_provider(body.provider, me)
+        record = lesson_or_404(me, body.lesson_id)
         result, _ = await llm.complete_json(
             "tutor", prompts.GRADE_SYSTEM, prompts.grade_user(record["topic"], body.question, body.answer), prompts.Grade,
-            provider=body.provider,
+            provider=body.provider, allowed=allowed(me),
         )
         return result
 
     @app.post("/api/explain")
-    async def explain(body: ExplainBody) -> prompts.ExplainGrade:
-        check_provider(body.provider)
-        record, lesson = ready_lesson(body.lesson_id)
+    async def explain(body: ExplainBody, me: Me) -> prompts.ExplainGrade:
+        check_provider(body.provider, me)
+        record, lesson = ready_lesson(me, body.lesson_id)
         eb = lesson.explain_back
         result, _ = await llm.complete_json(
             "tutor", prompts.EXPLAIN_SYSTEM,
             prompts.explain_user(record["topic"], eb.prompt, eb.rubric, body.explanation), prompts.ExplainGrade,
-            provider=body.provider,
+            provider=body.provider, allowed=allowed(me),
         )
         return result
 
     # --- tutor ---
 
     @app.post("/api/tutor")
-    async def tutor(body: TutorBody) -> StreamingResponse:
+    async def tutor(body: TutorBody, me: Me) -> StreamingResponse:
         if body.messages[-1].role != "user":
             raise HTTPException(422, "the last message must be from the user")
-        check_provider(body.provider)
-        record, lesson = ready_lesson(body.lesson_id)
+        check_provider(body.provider, me)
+        record, lesson = ready_lesson(me, body.lesson_id)
         ctx = body.context
         context = prompts.tutor_context(lesson, body.segment_id, ctx.widget_state, ctx.question, ctx.attempt, body.voice,
                                          ctx.narration_heard)
         messages = [m.model_dump() for m in body.messages]
         messages[-1]["content"] = f"{context}\n\n{messages[-1]['content']}"
-        system = prompts.tutor_system(record["topic"], lesson, about)
+        system = prompts.tutor_system(record["topic"], lesson, about(me))
 
         async def events():
             try:
-                async for event in llm.stream_events("tutor", system, messages, provider=body.provider):
+                async for event in llm.stream_events(
+                    "tutor", system, messages, provider=body.provider, allowed=allowed(me)
+                ):
                     yield f"data: {json.dumps(event)}\n\n"
                 yield 'data: {"done": true}\n\n'
             except Exception as e:
@@ -393,10 +436,10 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     # --- voice ---
 
     @app.post("/api/stt")
-    async def stt(audio: UploadFile, lesson_id: str = Form("")) -> dict:
+    async def stt(me: Me, audio: UploadFile, lesson_id: str = Form("")) -> dict:
         if config.stt is None:
             raise HTTPException(503, "speech-to-text is not configured")
-        record = store.get_lesson(lesson_id) if lesson_id else None
+        record = store.get_lesson(me, lesson_id) if lesson_id else None
         terms = [g["term"] for g in record["lesson"]["glossary"]] if record and record["lesson"] else []
         bias = {"prompt": prompts.stt_prompt(terms)} if terms else {}
         try:
@@ -412,16 +455,19 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         return {"text": glossary.snap(result.text, terms)}
 
     @app.post("/api/tts")
-    async def tts(body: TtsBody) -> FileResponse:
+    async def tts(body: TtsBody, _: Me) -> FileResponse:
         if config.tts is None:
             raise HTTPException(503, "text-to-speech is not configured")
         s = config.tts
-        key = hashlib.sha256(f"{s.base_url}\0{s.model}\0{s.voice}\0{body.text}".encode()).hexdigest()
+        if body.voice and body.voice not in s.voices:
+            raise HTTPException(422, f"unknown voice {body.voice!r}")
+        voice = body.voice or s.voice
+        key = hashlib.sha256(f"{s.base_url}\0{s.model}\0{voice}\0{body.text}".encode()).hexdigest()
         path = data / "tts" / f"{key}.mp3"
         if not path.exists():
             try:
                 audio = await speech_client(s).audio.speech.create(
-                    model=s.model, voice=s.voice, input=body.text, response_format="mp3"
+                    model=s.model, voice=voice, input=body.text, response_format="mp3"
                 )
             except openai.APIConnectionError as e:
                 raise HTTPException(503, f"text-to-speech unreachable: {e}") from e
@@ -436,17 +482,17 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     # --- review ---
 
     @app.get("/api/cards/due")
-    async def due_cards(limit: int = 50) -> list[dict]:
-        return store.due_cards(limit)
+    async def due_cards(me: Me, limit: int = 50) -> list[dict]:
+        return store.due_cards(me, limit)
 
     @app.post("/api/cards")
-    async def add_card(body: NewCard) -> dict:
-        topic = lesson_or_404(body.lesson_id)["topic"] if body.lesson_id else ""
-        return {"id": store.add_card(body.lesson_id, topic, body.front, body.back)}
+    async def add_card(body: NewCard, me: Me) -> dict:
+        topic = lesson_or_404(me, body.lesson_id)["topic"] if body.lesson_id else ""
+        return {"id": store.add_card(me, body.lesson_id, topic, body.front, body.back)}
 
     @app.post("/api/cards/{card_id}/review")
-    async def review_card(card_id: str, body: ReviewBody) -> dict:
-        due = store.review_card(card_id, body.rating)
+    async def review_card(card_id: str, body: ReviewBody, me: Me) -> dict:
+        due = store.review_card(me, card_id, body.rating)
         if due is None:
             raise HTTPException(404, "card not found")
         return {"due": due.isoformat()}
@@ -454,18 +500,19 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     # --- drill ---
 
     @app.post("/api/drill")
-    async def drill(body: DrillBody) -> Question:
-        check_provider(body.provider)
+    async def drill(body: DrillBody, me: Me) -> Question:
+        check_provider(body.provider, me)
         topic, focus = body.topic, ""
         if not topic:
-            ready = [r for r in store.list_lessons() if r["status"] == "ready"]
+            ready = [r for r in store.list_lessons(me) if r["status"] == "ready"]
             if not ready:
                 raise HTTPException(400, "no studied lessons yet; pass a topic")
-            pick = store.get_lesson(random.choice(ready)["id"])
+            pick = store.get_lesson(me, random.choice(ready)["id"])
             topic = pick["topic"]
             focus = random.choice(pick["lesson"]["segments"])["title"]
         question, _ = await llm.complete_json(
-            "tutor", prompts.DRILL_SYSTEM, prompts.drill_user(topic, focus, about), Question, provider=body.provider,
+            "tutor", prompts.DRILL_SYSTEM, prompts.drill_user(topic, focus, about(me)), Question,
+            provider=body.provider, allowed=allowed(me),
             check=lambda q, _: [] if q.kind == "numeric" else ["kind must be \"numeric\""],
         )
         return question

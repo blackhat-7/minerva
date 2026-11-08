@@ -1,5 +1,6 @@
 // Typed client for the backend HTTP API (docs/api.md).
 import type { Diagnostic, Lesson, Question } from './lesson'
+import { profileId } from './profile'
 
 export type Provider = { name: string; model: string; available: boolean; html: boolean }
 
@@ -20,7 +21,7 @@ export type SettingsProvider = {
   extra_body: Record<string, unknown>
   available: boolean
 }
-export type SpeechSettings = { base_url: string; model: string; voice: string }
+export type SpeechSettings = { base_url: string; model: string; voice: string; voices?: Record<string, string> }
 /** The server's configuration (config.toml), read-only. */
 export type Settings = {
   providers: SettingsProvider[]
@@ -37,10 +38,10 @@ export type Settings = {
 export type Role = 'lesson' | 'tutor'
 export type Effort = 'low' | 'medium' | 'high' | 'max'
 
-/** localStorage keys (JSON, as usePersistentState writes them) for the models chosen on this device;
+/** localStorage keys (JSON, as usePersistentState writes them) for the models the profile chose on this device;
  * '' = the server's role order. */
-export const LESSON_PROVIDER = 'minerva.provider'
-export const TUTOR_PROVIDER = 'minerva.tutorProvider'
+export const lessonProviderKey = () => `minerva.${profileId()}.provider`
+export const tutorProviderKey = () => `minerva.${profileId()}.tutorProvider`
 const chosen = (key: string): string | undefined => {
   try {
     return JSON.parse(localStorage.getItem(key) ?? '""') || undefined
@@ -48,7 +49,10 @@ const chosen = (key: string): string | undefined => {
     return undefined
   }
 }
-const tutorProvider = () => chosen(TUTOR_PROVIDER)
+const tutorProvider = () => chosen(tutorProviderKey())
+/** localStorage key for the narration voice the profile chose on this device; '' = the server's default. */
+export const voiceKey = () => `minerva.${profileId()}.voice`
+export const chosenVoice = () => chosen(voiceKey()) ?? ''
 
 export type LessonRecord = {
   id: string
@@ -111,17 +115,21 @@ export type TutorRequest = {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const init: RequestInit = { method }
+  const init: RequestInit = { method, headers: headers() }
   if (body instanceof FormData) init.body = body
   else if (body !== undefined) {
     init.body = JSON.stringify(body)
-    init.headers = { 'Content-Type': 'application/json' }
+    init.headers = headers(true)
   }
   const res = await fetch(`/api${path}`, init).catch(() => {
     throw new Error("Can't reach the Minerva server.")
   })
   if (!res.ok) throw new Error(await errorText(res))
   return (res.status === 204 ? undefined : res.json()) as Promise<T>
+}
+
+function headers(json = false): Record<string, string> {
+  return { 'X-Profile': profileId(), ...(json && { 'Content-Type': 'application/json' }) }
 }
 
 async function errorText(res: Response): Promise<string> {
@@ -158,7 +166,7 @@ export const api = {
   editSegment: (id: string, segmentId: string, instruction: string) =>
     request<LessonRecord>('POST', `/lessons/${id}/segments/${segmentId}/edit`, {
       instruction,
-      provider: chosen(LESSON_PROVIDER),
+      provider: chosen(lessonProviderKey()),
     }),
   complete: (id: string) => request<void>('POST', `/lessons/${id}/complete`),
 
@@ -183,8 +191,8 @@ export const api = {
   tts: async (text: string) => {
     const res = await fetch('/api/tts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      headers: headers(true),
+      body: JSON.stringify({ text, voice: chosenVoice() || undefined }),
     })
     if (!res.ok) throw new Error(await errorText(res))
     return res.blob()
@@ -194,7 +202,7 @@ export const api = {
   tutor: async (body: TutorRequest, onEvent: (event: TutorEvent) => void, signal?: AbortSignal) => {
     const res = await fetch('/api/tutor', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers(true),
       body: JSON.stringify({ ...body, provider: tutorProvider() }),
       signal,
     })

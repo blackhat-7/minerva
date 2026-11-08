@@ -2,7 +2,7 @@
 // Text is spoken sentence by sentence through a queue, so audio starts after the first sentence.
 // Server TTS when /api/status says so; the browser's speechSynthesis otherwise, or for a sentence whose TTS failed.
 import { useSyncExternalStore } from 'react'
-import { api } from './api'
+import { api, chosenVoice } from './api'
 import { createQueue, type Engine, type PlayState } from './queue'
 import { heard, hold, sentences, type Held } from './speech'
 
@@ -13,7 +13,7 @@ const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAA
 
 const el = new Audio()
 el.preservesPitch = true // speed changes shouldn't chipmunk the voice
-const urls = new Map<string, Promise<string>>() // sentence -> blob URL of its server TTS
+const urls = new Map<string, Promise<string>>() // voice + sentence -> blob URL of its server TTS
 const listeners = new Set<() => void>()
 let snapshot = {
   state: 'idle' as PlayState,
@@ -43,11 +43,12 @@ function finishClip() {
 el.onended = finishClip
 
 function serverAudio(text: string): Promise<string> {
-  let url = urls.get(text)
+  const key = `${chosenVoice()}\0${text}`
+  let url = urls.get(key)
   if (!url) {
     url = api.tts(text).then((blob) => URL.createObjectURL(blob))
-    urls.set(text, url)
-    url.catch(() => urls.delete(text))
+    urls.set(key, url)
+    url.catch(() => urls.delete(key))
   }
   return url
 }

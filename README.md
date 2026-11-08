@@ -2,6 +2,8 @@
 
 A personal app for learning complex technical topics deeply. You give it a topic. It checks what you already know, then builds a lesson: you predict before each reveal, hear narration over interactive simulations, ask a tutor, solve estimation problems, explain the idea back, and review with spaced repetition. Read mode shows the same lesson as one structured document.
 
+Several people can share one instance through profiles (`[profiles.<id>]` in `config.toml`). With two or more, the app opens a Netflix-style picker; each profile has its own lessons, review cards and allowed models. There are no passwords, so expose it only on a private network. For public access, put an auth proxy in front that sets `Remote-User` (and strips any client-sent one), and set `login` per profile to lock each login to its profile.
+
 While learning you can interrupt the narration and ask out loud, rewind or jump to any sentence, keep several tutor chats per lesson (rewind one to any question, quote selected text, replay a reply aloud), and ask for a section to be rewritten or extended (say, with an interactive animation).
 
 Works with your Claude subscription (through the official `claude` CLI) and any OpenAI-compatible local model server. Runs on one machine (PC or Pi); use it from any browser on your tailnet.
@@ -9,7 +11,7 @@ Works with your Claude subscription (through the official `claude` CLI) and any 
 ## Run
 
 ```sh
-cp config.example.toml config.toml        # edit providers, roles, [learner]
+cp config.example.toml config.toml        # edit providers, roles, [profiles.*]
 cd frontend && npm install && npm run build && cd ..
 cd backend && uv run minerva              # serves the app and API on 0.0.0.0:8765
 ```
@@ -55,7 +57,7 @@ Before writing a lesson, Minerva searches the web for the topic and gives the re
 
 ### Settings
 
-The Settings page (also a sheet inside a lesson) picks, per job (lessons, tutor), which model runs it, which Claude model, and how hard local models think. The Claude model and thinking are saved on the server in `data/settings.json` and override `config.toml`; the other choices stay on the device. Everything else (providers, voice, learner profile) comes from `config.toml` and needs a restart.
+The Settings page (also a sheet inside a lesson) picks, per job (lessons, tutor), which model runs it, which Claude model, and how hard local models think. The Claude model and thinking are saved on the server in `data/settings.json` and override `config.toml`; the other choices stay on the device. Everything else (providers, voice, profiles) comes from `config.toml` and needs a restart.
 
 ## Develop
 

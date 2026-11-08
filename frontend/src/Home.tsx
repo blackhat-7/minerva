@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'wouter'
-import { api, LESSON_PROVIDER, type LessonSummary } from './api'
+import { api, lessonProviderKey, type LessonSummary } from './api'
 import { unlock } from './audio'
 import { errorMessage, useAsync, usePersistentState } from './hooks'
 import { Icon } from './icons'
+import { profile, profiles, switchProfile } from './profile'
+import { Avatar } from './Profiles'
 import { Button, ErrorNote, IconButton, Skeleton, Spinner } from './ui'
 
 const SUGGESTIONS = [
@@ -20,8 +22,9 @@ export default function Home() {
   const status = useAsync(api.status)
   const lessons = useAsync(api.lessons)
   const [topic, setTopic] = useState('')
-  const [provider, setProvider] = usePersistentState(LESSON_PROVIDER, '')
+  const [provider, setProvider] = usePersistentState(lessonProviderKey(), '')
   const [busy, setBusy] = useState(false)
+  const me = profile()
   const [error, setError] = useState('')
 
   const providers = status.data?.providers ?? []
@@ -49,6 +52,16 @@ export default function Home() {
           <img src="/favicon.svg" alt="" className="size-6" />
           Minerva
         </div>
+        {me && profiles().length > 1 && (
+          <button
+            onClick={switchProfile}
+            aria-label={`${me.name}: switch profile`}
+            title="Switch profile"
+            className="grid size-11 place-items-center rounded-full transition hover:bg-white/[0.06]"
+          >
+            <Avatar profile={me} className="size-7 rounded-lg text-sm" />
+          </button>
+        )}
         <Link href="/settings" aria-label="Settings" title="Settings" className={`${navLink} w-11 justify-center px-0`}>
           <Icon name="sliders" />
         </Link>

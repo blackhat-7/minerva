@@ -6,8 +6,9 @@ import { useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import {
   api,
-  LESSON_PROVIDER,
-  TUTOR_PROVIDER,
+  lessonProviderKey,
+  tutorProviderKey,
+  voiceKey,
   type Effort,
   type Role,
   type Settings as ServerSettings,
@@ -116,8 +117,8 @@ function Select({
 }
 
 function Models({ settings: s, onChange }: { settings: ServerSettings; onChange: (s: ServerSettings) => void }) {
-  const [lessonProvider, setLessonProvider] = usePersistentState(LESSON_PROVIDER, '')
-  const [tutorProvider, setTutorProvider] = usePersistentState(TUTOR_PROVIDER, '')
+  const [lessonProvider, setLessonProvider] = usePersistentState(lessonProviderKey(), '')
+  const [tutorProvider, setTutorProvider] = usePersistentState(tutorProviderKey(), '')
   const provider = { lesson: [lessonProvider, setLessonProvider], tutor: [tutorProvider, setTutorProvider] } as const
   const [error, setError] = useState('')
   const names = s.providers.map((p) => p.name)
@@ -266,6 +267,22 @@ function Voice({ tts, stt }: { tts: SpeechSettings | null; stt: SpeechSettings |
         {row('Speech', tts, 'Browser voice')}
         {row('Recognition', stt, 'Off')}
       </Panel>
+      {tts?.voices && Object.keys(tts.voices).length > 1 && <VoicePicker tts={tts} voices={tts.voices} />}
     </Section>
+  )
+}
+
+/** The narration voice, per profile on this device. */
+function VoicePicker({ tts, voices }: { tts: SpeechSettings; voices: Record<string, string> }) {
+  const [voice, setVoice] = usePersistentState(voiceKey(), '')
+  return (
+    <Panel className="px-5 py-4">
+      <Segmented
+        label="Narrator"
+        value={voice in voices ? voice : tts.voice}
+        options={Object.entries(voices).map(([value, label]) => ({ value, label }))}
+        onChange={(v) => setVoice(v === tts.voice ? '' : v)}
+      />
+    </Panel>
   )
 }

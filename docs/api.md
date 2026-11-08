@@ -3,6 +3,14 @@
 All JSON. The lesson types are in `backend/src/minerva/lesson.py` (mirrored in `frontend/src/lesson.ts`).
 The backend serves the built frontend (`frontend/dist`) at `/`; in dev, Vite proxies `/api` to `127.0.0.1:8765`.
 
+## Profiles
+
+`GET /api/profiles` → `[{id, name}]`, from `[profiles.<id>]` in `config.toml`. The only endpoint without a profile.
+
+Every other endpoint acts for one profile, named by the `X-Profile: <id>` header. With exactly one profile the header may be omitted. An unknown id, or no header with several profiles, gives `400`. A lesson or card of another profile gives `404`. An explicit `provider` the profile may not use gives `403`. There are no passwords: expose the app only on a private network, or behind an auth proxy.
+
+Behind an auth proxy (Caddy + Authelia forward auth) the `Remote-User` header carries the logged-in username. When it is set, a request may only use profiles whose `login` equals it: `GET /api/profiles` lists just those, a missing `X-Profile` picks the only one, another profile gives `403`, and a login with no profile gives `403` everywhere. Without the header nothing changes. The header only narrows access, but the proxy must strip any client-sent `Remote-User`.
+
 ## Status
 
 `GET /api/status`
@@ -18,13 +26,15 @@ The backend serves the built frontend (`frontend/dist`) at `/`; in dev, Vite pro
 ```
 
 `GET /api/settings` → the server's configuration for the settings page, read-only and without keys:
-`{providers: [{name, kind, model, base_url, html, extra_body, available}], roles, tts: {base_url, model, voice} | null,
+`{providers: [{name, kind, model, base_url, html, extra_body, available}], roles, tts: {base_url, model, voice, voices} | null,
 stt: … | null, thinking, claude_models, claude_model_options, learner, config_path}`.
 
 - `PUT /api/settings/thinking {role: "lesson"|"tutor", effort: ""|"low"|"medium"|"high"|"max"}` → `204`. How hard OpenAI-compatible (local) providers think for that job; replaces `reasoning_effort` from `extra_body`. `""` falls back to `config.toml`.
 - `PUT /api/settings/claude_model {role, model}` → `204`. The Claude model for that job, one of `claude_model_options`; `""` falls back to `config.toml`.
 
 Both are saved in `data/settings.json` and apply on every device.
+
+`/api/status` and `/api/settings` are per profile: they list only the profile's providers and the role lists filtered to them. In settings, `learner` is the profile's `about`. Thinking and Claude-model settings are global.
 
 `available` is a quick reachability check. With `tts: false` the frontend speaks with the browser's `speechSynthesis`; with `stt: false` it hides the mic.
 
@@ -53,7 +63,7 @@ Both are saved in `data/settings.json` and apply on every device.
 - `PUT /api/lessons/{id}/progress {progress}` → `204`.
 - `DELETE /api/lessons/{id}` → `204`.
 
-`provider` names a configured provider; omitted, the role's list is tried in order.
+`provider` names a provider the profile may use (else `403`); omitted, the role's list is tried in order.
 
 ## Grading
 
@@ -81,7 +91,7 @@ Streams `text/event-stream`: `data: {"delta": "…"}` events, then `data: {"done
 ## Voice
 
 - `POST /api/stt` multipart `audio` (any browser recording format) + optional `lesson_id` → `{text}`. The lesson glossary biases recognition.
-- `POST /api/tts {text}` → `audio/mpeg`. Cached on disk. `503` when TTS is not configured.
+- `POST /api/tts {text, voice?}` → `audio/mpeg`. Cached on disk. `voice` is one of `tts.voices` from `/api/settings` (the frontend keeps the choice per profile on each device); omitted, the default `tts.voice`. `422` for a voice not offered, `503` when TTS is not configured.
 
 ## Review (FSRS)
 

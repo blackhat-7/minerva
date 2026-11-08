@@ -87,7 +87,7 @@ def config() -> Config:
             {"name": "b", "kind": "openai", "base_url": "http://127.0.0.1:9/v1", "model": "m"},
         ],
         "roles": {"lesson": ["a", "b"], "tutor": ["a"]},
-        "learner": {"about": "Runs an RX 7900 XTX."},
+        "profiles": {"me": {"name": "Me", "about": "Runs an RX 7900 XTX."}},
     })
 
 

@@ -103,10 +103,11 @@ class LLM:
         self._clients: dict[str, openai.AsyncOpenAI] = {}
         self._probes: dict[str, tuple[float, bool]] = {}
 
-    def providers(self, role: str, name: str | None = None) -> list[Provider]:
+    def providers(self, role: str, name: str | None = None, allowed: list[str] | None = None) -> list[Provider]:
         """An explicit provider name skips the role list. Raises KeyError for unknown names.
+        `allowed` (a profile's providers) filters the role list; checking an explicit name is the caller's job.
         Claude providers come with the model chosen for the role on the settings page, if any."""
-        names = [name] if name else getattr(self.config.roles, role)
+        names = [name] if name else [n for n in getattr(self.config.roles, role) if allowed is None or n in allowed]
         chosen = self.claude_models.get(role)
         return [
             p.model_copy(update={"model": chosen}) if chosen and p.kind == "claude_code" else p
@@ -121,6 +122,7 @@ class LLM:
         model: type[T],
         *,
         provider: str | None = None,
+        allowed: list[str] | None = None,
         check: Callable[[T, Provider], list[str]] | None = None,
         on_event: OnEvent | None = None,
     ) -> tuple[T, str]:
@@ -130,7 +132,7 @@ class LLM:
         `on_event` gets the thinking and tool events as they happen."""
         failures = []
         on_event = on_event or (lambda _: None)
-        for p in self.providers(role, provider):
+        for p in self.providers(role, provider, allowed):
             try:
                 text_system = system(p) if callable(system) else system
                 effort = self.thinking.get(role)
@@ -140,12 +142,13 @@ class LLM:
         raise Unavailable("; ".join(failures))
 
     async def stream_events(
-        self, role: str, system: str, messages: Messages, *, provider: str | None = None
+        self, role: str, system: str, messages: Messages, *, provider: str | None = None,
+        allowed: list[str] | None = None,
     ) -> AsyncIterator[dict]:
         """Yields reply text as {"delta": text} among the thinking and tool events.
         Falls through to the next provider only before the first event."""
         failures = []
-        for p in self.providers(role, provider):
+        for p in self.providers(role, provider, allowed):
             async with contextlib.aclosing(self._stream(p, system, messages, self.thinking.get(role))) as chunks:
                 try:
                     first = await anext(chunks)

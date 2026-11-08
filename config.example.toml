@@ -4,7 +4,8 @@
 # kind = "openai": any OpenAI-compatible server (llama.cpp, Ollama, vLLM, LM Studio, Strata, OpenRouter).
 # kind = "claude_code": your Claude subscription, through the official `claude` CLI in headless mode
 #   (`claude -p`). Install Claude Code on the machine running the backend and log in once with `claude`.
-#   Minerva never reads your credentials. Personal use only: don't let other people use your instance.
+#   Minerva never reads your credentials. Your subscription is personal:
+#   other people's profiles must not use the claude provider (see [profiles]).
 [[providers]]
 name = "local"
 kind = "openai"
@@ -29,12 +30,24 @@ html = true
 lesson = ["claude", "local"]   # lesson generation: quality matters
 tutor = ["local", "claude"]    # chat, grading, drills: latency matters
 
-# Who is learning. Lessons pitch depth and pick examples from this.
-[learner]
+# Who is learning. Lessons pitch depth and pick examples from the profile's about text.
+# Each profile has its own lessons and review cards. With 2+ profiles the app shows a picker (no passwords).
+# The first profile gets the lessons made before profiles existed. Ids: lowercase letters, digits, - and _.
+[profiles.me]
+name = "Me"
 about = """
 Backend engineer (Python, Go), comfortable with Linux and GPUs. Runs local LLMs on one 24 GB GPU with
 llama.cpp. Learning ML infrastructure: training and inference at scale.
 """
+# providers = ["claude", "local"]   # allowed providers; omit for all
+# login = "me"   # username from an auth proxy such as Authelia (Remote-User); locks that login to this profile
+
+# The Claude subscription is personal: other people's profiles should list only non-Claude providers.
+# [profiles.friend]
+# name = "Friend"
+# about = "Frontend developer learning how databases work."
+# providers = ["local"]
+# login = "friend"   # username from an auth proxy such as Authelia (Remote-User); locks that login to this profile
 
 # Web search before writing a lesson, so the lesson gets current facts with any model.
 # By default it uses Exa's free hosted endpoint: no key or setup, but your lesson topics go to Exa,
@@ -50,6 +63,7 @@ enabled = true
 base_url = "http://127.0.0.1:8000/v1"
 model = "speaches-ai/Kokoro-82M-v1.0-ONNX"
 voice = "af_heart"
+voices = { af_heart = "Heart (female)", am_michael = "Michael (male)" }  # offered in Settings; include `voice`
 
 [stt]
 base_url = "http://127.0.0.1:8000/v1"

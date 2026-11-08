@@ -3,11 +3,14 @@ import threading
 import time
 from datetime import datetime
 
+import pytest
+
 from conftest import choice, lesson_json, wait_for
 
 from fastapi.testclient import TestClient
 
 from minerva.app import create_app
+from minerva.config import Config, Speech
 from minerva.llm import LLMError
 
 
@@ -102,9 +105,9 @@ def test_cards_review_round_trip(client, fake):
 def test_due_cards_interleave_topics(client):
     store = client.app.state.store
     for topic in ["A", "A", "A", "B", "B"]:
-        store.add_card(None, topic, "front", "back")
-    assert [c["topic"] for c in store.due_cards(10)] == ["A", "B", "A", "B", "A"]
-    assert len(store.due_cards(2)) == 2
+        store.add_card("me", None, topic, "front", "back")
+    assert [c["topic"] for c in store.due_cards("me", 10)] == ["A", "B", "A", "B", "A"]
+    assert len(store.due_cards("me", 2)) == 2
 
 
 def test_grade_free_answer(client, fake):
@@ -251,3 +254,15 @@ def test_claude_model_setting(client):
     assert client.put("/api/settings/claude_model", json={"role": "lesson", "model": "gpt-9"}).status_code == 422
     client.put("/api/settings/claude_model", json={"role": "lesson", "model": ""})
     assert client.get("/api/settings").json()["claude_models"] == {}
+
+
+def test_tts_voice_must_be_offered(config, fake, tmp_path):
+    tts = {"base_url": "http://127.0.0.1:9/v1", "model": "kokoro", "voice": "af_heart",
+           "voices": {"af_heart": "Heart", "am_michael": "Michael"}}
+    voiced = config.model_copy(update={"tts": Speech.model_validate(tts)})
+    with TestClient(create_app(voiced, tmp_path / "data")) as c:
+        assert c.get("/api/settings").json()["tts"]["voices"] == tts["voices"]
+        assert c.post("/api/tts", json={"text": "hi", "voice": "bf_emma"}).status_code == 422
+        assert c.post("/api/tts", json={"text": "hi", "voice": "am_michael"}).status_code == 503  # offered; server down
+    with pytest.raises(ValueError, match="must include the default voice"):
+        Config.model_validate({**config.model_dump(), "tts": {**tts, "voice": "bf_emma"}})
