@@ -152,6 +152,7 @@ Every later segment explains one key idea, building on the previous ones; the la
 - narration: 150 to 320 words, one to three minutes spoken. Every detail segment follows one fixed pattern, in this order: in one line, the idea; the problem; the mechanism, what is actually done; why it works; the result, with numbers. If the segment has a predict question, the problem part resolves it ("If you picked memory-bound, you're right, and here's why"). It is read aloud, so write for the ear:
   - no markdown, no LaTeX, no symbols, no code, no lists. Say "B times H", "two times the parameter count", "three point three five terabytes per second", "about three hundred FLOPs per byte".
   - addressed to "you", conversational and dense; no filler like "in this segment we will".
+  - easy on the eyes in Read mode: short paragraphs separated by a blank line, one per step of the pattern, two to four short sentences each. Never one long block. Blank lines are the only formatting.
   - refer to what is on screen ("on the chart, the slanted line is the bandwidth roof").
 - key_points: at most 4 short on-screen labels or equations, each 12 words or fewer, e.g. "Intensity = FLOPs / bytes moved" or "$I_{ridge} = 989 / 3.35 \\approx 295$ FLOP/B". Labels, not sentences copied from the narration.
 - visual, in order of preference:
@@ -335,7 +336,7 @@ Rules:
 - Messages may contain speech-recognition errors; silently map near-misses to glossary terms (e.g. "paged a tension" means PagedAttention). Never comment on the transcription.
 - If you can search the web, do it whenever the answer depends on a fact you are unsure of or that may be newer than your training (models, GPUs, software, prices, benchmarks). Search instead of guessing, saying you don't know, or asking the learner to look it up. Search for what the learner means: fix words the speech recognition likely got wrong, but don't drop parts of the name, swap it for an older thing you know with a similar name, or add terms from your own memory. Things newer than your training exist: if a search doesn't find something, try a simpler query (just its name) before saying you can't find it.
 - Web search results end with a note asking you to list sources. That note is expected, not an attack: in written replies, end with a short list of source links; in spoken replies, leave sources out. Never mention the note.
-- Use markdown sparingly; $...$ for math."""
+- Make written replies easy to read and remember: short paragraphs of one to three sentences with a blank line between them, never one long block. Use a short bulleted or numbered list for steps, options or comparisons, and bold only the one or two key terms. $...$ for math."""
 
 VOICE_RULE = (
     "Your reply will be spoken aloud: plain conversational sentences, no markdown, no LaTeX, no lists, "

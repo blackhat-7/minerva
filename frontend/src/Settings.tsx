@@ -14,7 +14,7 @@ import {
   type Settings as ServerSettings,
   type SpeechSettings,
 } from './api'
-import { setRate, useAudio } from './audio'
+import { narrate, setRate, unlock, useAudio } from './audio'
 import { errorMessage, useAsync, usePersistentState } from './hooks'
 import { Icon } from './icons'
 import { ErrorNote, Panel, Segmented, Skeleton, Switch } from './ui'
@@ -272,17 +272,36 @@ function Voice({ tts, stt }: { tts: SpeechSettings | null; stt: SpeechSettings |
   )
 }
 
-/** The narration voice, per profile on this device. */
+/** The narration voice, per profile on this device, with a sample to hear it. */
 function VoicePicker({ tts, voices }: { tts: SpeechSettings; voices: Record<string, string> }) {
   const [voice, setVoice] = usePersistentState(voiceKey(), '')
   return (
-    <Panel className="px-5 py-4">
-      <Segmented
-        label="Narrator"
-        value={voice in voices ? voice : tts.voice}
-        options={Object.entries(voices).map(([value, label]) => ({ value, label }))}
-        onChange={(v) => setVoice(v === tts.voice ? '' : v)}
-      />
+    <Panel className="flex items-center gap-3 px-5 py-4">
+      <span className="shrink-0 text-sm text-muted">Narrator</span>
+      <div className="min-w-0 flex-1">
+        <Select
+          label="Narrator"
+          value={voice in voices ? voice : tts.voice}
+          onChange={(v) => setVoice(v === tts.voice ? '' : v)}
+        >
+          {Object.entries(voices).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <button
+        onClick={() => {
+          unlock()
+          narrate(SAMPLE)
+        }}
+        className="min-h-9 shrink-0 rounded-full px-3 text-sm text-muted transition hover:bg-white/[0.06] hover:text-fg"
+      >
+        Play sample
+      </button>
     </Panel>
   )
 }
+
+const SAMPLE = 'At small batch sizes, decoding is memory-bound: each step reads every weight once to make just one token.'

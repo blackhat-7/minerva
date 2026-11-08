@@ -63,7 +63,16 @@ enabled = true
 base_url = "http://127.0.0.1:8000/v1"
 model = "speaches-ai/Kokoro-82M-v1.0-ONNX"
 voice = "af_heart"
-voices = { af_heart = "Heart (female)", am_michael = "Michael (male)" }  # offered in Settings; include `voice`
+# Narrators offered in Settings (must include `voice`). Kokoro's clearest, best first; its male voices
+# are a grade below its best female ones.
+[tts.voices]
+af_heart = "Heart · US female · clearest"
+af_bella = "Bella · US female"
+bf_emma = "Emma · UK female"
+am_michael = "Michael · US male · calm"
+am_fenrir = "Fenrir · US male · deeper"
+am_puck = "Puck · US male · brighter"
+bm_george = "George · UK male"
 
 [stt]
 base_url = "http://127.0.0.1:8000/v1"
