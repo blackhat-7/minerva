@@ -195,9 +195,10 @@ export function Switch({ on, onChange, children }: { on: boolean; onChange: (on:
   )
 }
 
-/** A button that opens a small menu above it. Closes on outside tap or Escape. */
+/** A button that opens a small menu above it (below it in the top half of the screen). Closes on outside tap or Escape. */
 export function Popover({ icon, label, children }: { icon: IconName; label: string; children: ReactNode }) {
   const [open, setOpen] = useState(false)
+  const [below, setBelow] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
@@ -214,11 +215,20 @@ export function Popover({ icon, label, children }: { icon: IconName; label: stri
   return (
     // On phones the menu spans the dock it sits in (the dock's backdrop blur makes it the containing block).
     <div ref={root} className="sm:relative">
-      <IconButton icon={icon} label={label} aria-expanded={open} onClick={() => setOpen(!open)} className="text-muted" />
+      <IconButton
+        icon={icon}
+        label={label}
+        aria-expanded={open}
+        onClick={() => {
+          setBelow(root.current!.getBoundingClientRect().top < innerHeight / 2)
+          setOpen(!open)
+        }}
+        className="text-muted"
+      />
       {open && (
         <div
           role="menu"
-          className="absolute bottom-full mb-3 max-sm:inset-x-0 sm:right-0 sm:w-72 animate-enter rounded-2xl border border-white/[0.08] bg-raised/95 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-xl"
+          className={`absolute ${below ? 'top-full mt-3' : 'bottom-full mb-3'} max-sm:inset-x-0 sm:right-0 sm:w-72 animate-enter rounded-2xl border border-white/[0.08] bg-raised/95 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-xl`}
         >
           {children}
         </div>

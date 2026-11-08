@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS lessons (
     provider TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL,
     error TEXT NOT NULL DEFAULT '',
+    learner TEXT NOT NULL DEFAULT '',  -- what the diagnostic showed the learner knows
     diagnostic TEXT,              -- JSON Diagnostic
     lesson TEXT,                  -- JSON Lesson
     progress TEXT NOT NULL DEFAULT '{}',
@@ -66,6 +67,8 @@ class Store:
                 if "profile" not in columns:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN profile TEXT NOT NULL DEFAULT ''")
                     db.execute(f"UPDATE {table} SET profile = ?", (owner,))
+            if "learner" not in {r["name"] for r in db.execute("PRAGMA table_info(lessons)")}:
+                db.execute("ALTER TABLE lessons ADD COLUMN learner TEXT NOT NULL DEFAULT ''")
             db.execute("DROP INDEX IF EXISTS cards_due")
             db.execute("CREATE INDEX IF NOT EXISTS cards_profile_due ON cards (profile, due)")
 
@@ -95,7 +98,7 @@ class Store:
     def get_lesson(self, profile: str, lesson_id: str) -> dict | None:
         with self._db() as db:
             row = db.execute(
-                "SELECT id, topic, created_at, provider, status, error, diagnostic, lesson, progress"
+                "SELECT id, topic, created_at, provider, status, error, learner, diagnostic, lesson, progress"
                 " FROM lessons WHERE id = ? AND profile = ?",
                 (lesson_id, profile),
             ).fetchone()

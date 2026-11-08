@@ -27,7 +27,7 @@ export function ReadView({
   lessonId: string
   checks: Record<string, Attempt>
   onCheck: (segmentId: string, a: Attempt) => void
-  onWidgetState: (state: Record<string, unknown>) => void
+  onWidgetState: (segmentId: string, state: Record<string, unknown>) => void
   onPractice: () => void
   dock: Dock
   onSection: (segmentId: string) => void // the section being read or looked at, for the tutor
@@ -83,6 +83,21 @@ export function ReadView({
         <section id="start" className="scroll-mt-24">
           <h1 className="text-4xl font-semibold tracking-tight text-balance">{lesson.title}</h1>
           <Markdown className="mt-4 text-[17px] leading-relaxed text-fg/90">{lesson.summary}</Markdown>
+          {lesson.analogy && (
+            <Panel className="mt-6 flex flex-col gap-3 p-4 sm:p-5">
+              <h2 className="text-sm font-medium text-accent">The picture</h2>
+              <Markdown className="text-[15px] leading-relaxed">{lesson.analogy.picture}</Markdown>
+              <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+                {lesson.analogy.parts.map((p, i) => (
+                  <div key={i} className="contents">
+                    <dt className="text-muted">{p.familiar}</dt>
+                    <dd>→ {p.real}</dd>
+                  </div>
+                ))}
+              </dl>
+              {lesson.analogy.limits && <p className="text-sm text-muted">Where it breaks: {lesson.analogy.limits}</p>}
+            </Panel>
+          )}
         </section>
 
         {lesson.segments.map((s, i) => (
@@ -107,14 +122,18 @@ export function ReadView({
             </div>
             <h2 className="-mt-3 text-2xl font-semibold tracking-tight">{s.title}</h2>
             {s.one_line && <Markdown className="text-lg text-fg/70">{s.one_line}</Markdown>}
-            <ReadAlong
-              text={s.narration}
-              onPlayFrom={(sentence) => readFrom(i, sentence)}
-              className="text-[16px] leading-relaxed text-fg/90"
-            />
+            {s.text?.trim() ? (
+              <Markdown className="text-[16px] leading-relaxed text-fg/90">{s.text}</Markdown>
+            ) : (
+              <ReadAlong
+                text={s.narration}
+                onPlayFrom={(sentence) => readFrom(i, sentence)}
+                className="text-[16px] leading-relaxed text-fg/90"
+              />
+            )}
             {s.visual.kind !== 'none' && (
               <Panel className="overflow-x-auto p-3 sm:p-6">
-                <Visual visual={s.visual} onState={onWidgetState} />
+                <Visual visual={s.visual} narration={s.narration} onState={(state) => onWidgetState(s.id, state)} />
               </Panel>
             )}
             {s.task && (

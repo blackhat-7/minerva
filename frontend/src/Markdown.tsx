@@ -5,11 +5,13 @@ import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { GlossaryContext, rehypeGlossary } from './glossary'
+import { dollarMath } from './dollarMath'
+import { highlight } from './highlight'
 
 const remarkPlugins = [remarkGfm, remarkMath]
 
-/** Markdown with `$inline$` and `$$display$$` math (\( \) and \[ \] too). Inside a lesson, glossary terms
- * are underlined and define themselves on hover or tap. */
+/** Markdown with `$inline$` and `$$display$$` math (\( \) and \[ \] too) and highlighted code blocks. Inside a
+ * lesson, glossary terms are underlined and define themselves on hover or tap. */
 export function Markdown({ children, className = '' }: { children: string; className?: string }) {
   const glossary = useContext(GlossaryContext)
   const [rehypePlugins, components] = useMemo((): [never[], Components] => {
@@ -19,6 +21,11 @@ export function Markdown({ children, className = '' }: { children: string; class
           {children}
         </a>
       ),
+      code: ({ className, children }) => {
+        const language = /language-(\S+)/.exec(className ?? '')?.[1]
+        const html = language && typeof children === 'string' ? highlight(children, language) : null
+        return html === null ? <code className={className}>{children}</code> : <code dangerouslySetInnerHTML={{ __html: html }} />
+      },
       dfn: ({ children, ...props }) => {
         const data = props as Record<string, string>
         const [name, definition] = [data['data-term'], data['data-definition']]
@@ -34,13 +41,10 @@ export function Markdown({ children, className = '' }: { children: string; class
     const plugins = glossary ? [rehypeGlossary(glossary), rehypeKatex] : [rehypeKatex]
     return [plugins as never[], components]
   }, [glossary])
-  const text = children
-    .replace(/\\\[([\s\S]+?)\\\]/g, (_, m) => `$$${m}$$`)
-    .replace(/\\\(([\s\S]+?)\\\)/g, (_, m) => `$${m}$`)
   return (
     <div className={`md ${className}`}>
       <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
-        {text}
+        {dollarMath(children)}
       </ReactMarkdown>
     </div>
   )

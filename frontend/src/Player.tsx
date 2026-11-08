@@ -6,9 +6,9 @@ import { api, type ChatMessage, type ExplainResult, type LessonRecord } from './
 import { stop, unlock } from './audio'
 import { stopListening, toggleAsk, useListening } from './listen'
 import { compileGlossary, GlossaryContext } from './glossary'
-import { errorMessage, useHotkeys } from './hooks'
+import { errorMessage, useDraggable, useHotkeys } from './hooks'
 import { Icon } from './icons'
-import type { GlossaryTerm, Lesson, Pitfall, Question } from './lesson'
+import type { GlossaryTerm, Lesson, Pitfall } from './lesson'
 import { Markdown } from './Markdown'
 import { Mic } from './Mic'
 import { QuestionCard, type Attempt } from './Question'
@@ -20,6 +20,7 @@ import { EditSection, type EditState } from './Edit'
 import { QuoteSelection } from './Quote'
 import { SettingsPanel } from './Settings'
 import { Tutor } from './Tutor'
+import { tutorQuestion } from './tutorQuestion'
 import { Button, ErrorNote, Eyebrow, field, IconButton, Notice, Panel, Segmented, Sheet, Spinner, Stat } from './ui'
 
 /** What the frontend saves in LessonRecord.progress. */
@@ -88,16 +89,19 @@ export function Player({ record, onRecord }: { record: LessonRecord; onRecord: (
   const glossary = useMemo(() => compileGlossary(lesson.glossary), [lesson])
   const [progress, setProgress] = useState<Progress>(() => loadProgress(record.progress))
   const [panel, setPanel] = useState<'tutor' | 'glossary' | 'settings' | 'edit' | null>(null)
-  const widgetState = useRef<Record<string, unknown>>({})
+  // What each segment's visual reports (widget controls, the step a scene is on), by segment id: Read mode shows
+  // many visuals at once, and the tutor should see the one of the section being read.
+  const widgetState = useRef<Record<string, Record<string, unknown>>>({})
   const draft = useRef('')
   const tutorInput = useRef<HTMLTextAreaElement>(null)
-  const onWidgetState = useCallback((s: Record<string, unknown>) => {
-    widgetState.current = s
+  const onWidgetState = useCallback((segmentId: string, s: Record<string, unknown>) => {
+    widgetState.current[segmentId] = s
   }, [])
   // Where a segment puts its narration controls and status notices: inside the dock.
   const [mediaSlot, setMediaSlot] = useState<HTMLElement | null>(null)
   const [noticeSlot, setNoticeSlot] = useState<HTMLElement | null>(null)
   const dock: Dock = { media: mediaSlot, notices: noticeSlot }
+  const { setElement: setDock, style: dockStyle, onPointerDown: dragDock } = useDraggable<HTMLDivElement>('minerva.dockOffset')
 
   const index = Math.min(progress.step, steps.length - 1)
   const step = steps[index]
@@ -130,7 +134,8 @@ export function Player({ record, onRecord }: { record: LessonRecord; onRecord: (
       chatId: prev.chatId === id ? '' : prev.chatId,
     }))
 
-  // Save progress, debounced; flush on leaving.
+  // Save progress, debounced; flush on leaving. A failed save (server restarting, connection lost) is kept
+  // and retried every few seconds until it goes through.
   const pending = useRef<Progress | null>(null)
   const [saveFailed, setSaveFailed] = useState(false)
   const save = useCallback(() => {
@@ -139,9 +144,17 @@ export function Player({ record, onRecord }: { record: LessonRecord; onRecord: (
     pending.current = null
     api.saveProgress(record.id, p).then(
       () => setSaveFailed(false),
-      () => setSaveFailed(true),
+      () => {
+        pending.current ??= p // unless newer progress is already waiting
+        setSaveFailed(true)
+      },
     )
   }, [record.id])
+  useEffect(() => {
+    if (!saveFailed) return
+    const t = setInterval(save, 5000)
+    return () => clearInterval(t)
+  }, [saveFailed, save])
   const loaded = useRef(progress)
   useEffect(() => {
     if (progress === loaded.current) return
@@ -273,21 +286,27 @@ export function Player({ record, onRecord }: { record: LessonRecord; onRecord: (
         },
   )
 
-  // What the tutor sees: the step, the live simulation state and the question being worked on.
+  // What the tutor sees: the step, the live simulation state and the question being worked on (none in Read mode).
   const context = () => {
-    let question: Question | null = null
-    let saved: Attempt | undefined
-    if (segment) {
+    let asked = tutorQuestion({ check: null, draft: '' })
+    if (!reading && segment) {
       const predicting = segment.predict && !progress.predictions[segment.id]
-      question = predicting ? segment.predict : segment.check
-      saved = predicting ? undefined : progress.checks[segment.id]
-    } else if (step.kind === 'problem') {
-      question = lesson.problems[step.index]
-      saved = progress.problems[step.index]
+      asked = tutorQuestion({
+        predict: predicting ? segment.predict : null,
+        check: segment.check,
+        saved: progress.checks[segment.id],
+        draft: draft.current,
+      })
+    } else if (!reading && step.kind === 'problem') {
+      asked = tutorQuestion({
+        check: lesson.problems[step.index],
+        saved: progress.problems[step.index],
+        draft: draft.current,
+      })
     }
     return {
       segment_id: segment?.id ?? '',
-      context: { widget_state: widgetState.current, question, attempt: saved?.answer || draft.current },
+      context: { widget_state: widgetState.current[segment?.id ?? ''] ?? {}, ...asked },
     }
   }
 
@@ -322,10 +341,7 @@ export function Player({ record, onRecord }: { record: LessonRecord; onRecord: (
               <Button
                 variant="ghost"
                 className="px-3 text-xs text-warn"
-                onClick={() => {
-                  pending.current = progress
-                  save()
-                }}
+                onClick={save}
               >
                 Not saved · Retry
               </Button>
@@ -397,7 +413,10 @@ export function Player({ record, onRecord }: { record: LessonRecord; onRecord: (
               nextNarration={lesson.segments[step.index + 1]?.narration}
               prediction={progress.predictions[segment!.id]}
               check={progress.checks[segment!.id]}
-              onPredict={(a) => patch({ predictions: { ...progress.predictions, [segment!.id]: a } })}
+              onPredict={(a) => {
+                draft.current = '' // the prediction is in; a draft from now on answers the check question
+                patch({ predictions: { ...progress.predictions, [segment!.id]: a } })
+              }}
               onCheck={(a) => patch({ checks: { ...progress.checks, [segment!.id]: a } })}
               onDraft={(t) => {
                 draft.current = t
@@ -453,34 +472,47 @@ export function Player({ record, onRecord }: { record: LessonRecord; onRecord: (
           <div
             className={`pointer-events-none fixed inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] transition-[padding] duration-300 ${panel ? 'lg:pr-[412px]' : ''}`}
           >
-            <div ref={setNoticeSlot} className="flex flex-col items-center gap-2" />
-            {hint && <Notice>{hint}</Notice>}
-            <nav
-              aria-label="Lesson controls"
-              className="pointer-events-auto relative flex w-full max-w-md items-center gap-1 rounded-full border border-white/[0.08] bg-raised/80 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-xl sm:w-auto sm:max-w-none"
+            <div
+              ref={setDock}
+              style={dockStyle}
+              className="flex w-full max-w-md flex-col items-center gap-2 sm:w-auto sm:max-w-none"
             >
-              {!reading && (
-                <IconButton icon="back" label="Previous step" onClick={() => go(index - 1)} disabled={index === 0} className="text-muted" />
-              )}
-              <div ref={setMediaSlot} className="flex flex-1 items-center justify-center gap-1 empty:hidden sm:px-2" />
-              {!reading && step.kind === 'explain' && !progress.explain && (
-                <Button variant="ghost" className="text-muted" onClick={() => go(index + 1)}>
-                  Skip
-                </Button>
-              )}
-              {!reading && (
-                <Button
-                  variant="primary"
-                  onClick={next}
-                  aria-disabled={!canAdvance}
-                  aria-label="Continue"
-                  className={`ml-auto pr-4 max-[400px]:w-11 max-[400px]:px-0 ${canAdvance ? '' : 'opacity-40'}`}
+              <div ref={setNoticeSlot} className="flex flex-col items-center gap-2" />
+              {hint && <Notice>{hint}</Notice>}
+              <nav
+                aria-label="Lesson controls"
+                className="pointer-events-auto relative flex w-full items-center gap-1 rounded-full border border-white/[0.08] bg-raised/80 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-xl sm:w-auto"
+              >
+                <div
+                  onPointerDown={dragDock}
+                  title="Drag to move"
+                  className="-mr-1 grid h-11 w-6 shrink-0 cursor-grab touch-none place-items-center text-muted/60 hover:text-muted active:cursor-grabbing"
                 >
-                  <span className="max-[400px]:hidden">Continue</span>
-                  <Icon name="next" />
-                </Button>
-              )}
-            </nav>
+                  <Icon name="grip" />
+                </div>
+                {!reading && (
+                  <IconButton icon="back" label="Previous step" onClick={() => go(index - 1)} disabled={index === 0} className="text-muted" />
+                )}
+                <div ref={setMediaSlot} className="flex flex-1 items-center justify-center gap-1 empty:hidden sm:px-2" />
+                {!reading && step.kind === 'explain' && !progress.explain && (
+                  <Button variant="ghost" className="text-muted" onClick={() => go(index + 1)}>
+                    Skip
+                  </Button>
+                )}
+                {!reading && (
+                  <Button
+                    variant="primary"
+                    onClick={next}
+                    aria-disabled={!canAdvance}
+                    aria-label="Continue"
+                    className={`ml-auto pr-4 max-[400px]:w-11 max-[400px]:px-0 ${canAdvance ? '' : 'opacity-40'}`}
+                  >
+                    <span className="max-[400px]:hidden">Continue</span>
+                    <Icon name="next" />
+                  </Button>
+                )}
+              </nav>
+            </div>
           </div>
         )}
       </div>

@@ -1,17 +1,17 @@
 // /lesson/:id — diagnostic, then generation (with reviews while you wait), then the player.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
-import { api, type LessonRecord, type Step } from './api'
+import { api, type Draft, type LessonRecord, type Step } from './api'
+import { Building } from './Building'
 import { errorMessage, useAsync } from './hooks'
 import { Icon } from './icons'
 import type { Question } from './lesson'
 import { Markdown } from './Markdown'
 import { Player } from './Player'
 import { ReviewDeck } from './Review'
-import { Steps } from './Steps'
 import { Button, ErrorNote, Eyebrow, field, Panel, Skeleton, Spinner } from './ui'
 
-const POLL_MS = 2000
+const POLL_MS = 1000
 
 export default function LessonPage({ id }: { id: string }) {
   const record = useAsync(useCallback(() => api.lesson(id), [id]))
@@ -60,7 +60,7 @@ export default function LessonPage({ id }: { id: string }) {
   if (r.status === 'generating')
     return (
       <Shell>
-        <Generating topic={r.topic} activity={r.activity ?? []} />
+        <Generating topic={r.topic} activity={r.activity ?? []} draft={r.draft} />
       </Shell>
     )
 
@@ -192,7 +192,7 @@ function DiagnosticAnswer({
   )
 }
 
-function Generating({ topic, activity }: { topic: string; activity: Step[] }) {
+function Generating({ topic, activity, draft }: { topic: string; activity: Step[]; draft?: Draft }) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -218,8 +218,8 @@ function Generating({ topic, activity }: { topic: string; activity: Step[] }) {
         </p>
       </div>
       {activity.length > 0 && (
-        <div className="max-h-72 overflow-y-auto rounded-2xl bg-white/[0.03] px-4 py-3">
-          <Steps steps={activity} live />
+        <div className="rounded-3xl border border-white/[0.06] bg-surface/60 px-4 pt-5 pb-1 sm:px-6">
+          <Building steps={activity} draft={draft} />
         </div>
       )}
       <div>

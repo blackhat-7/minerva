@@ -1,20 +1,36 @@
-// Renders a segment's visual: a registered widget, Mermaid diagram, markdown table, KaTeX equation or sandboxed HTML simulation.
+// Renders a segment's visual: a registered widget, an animated scene, a code walkthrough, a Mermaid diagram,
+// a markdown table, a KaTeX equation or a sandboxed HTML simulation.
 import katex from 'katex'
 import { Component, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Code } from './Code'
+import { svgWidth, topDown } from './diagram'
 import type { Visual as VisualSpec } from './lesson'
 import { Markdown } from './Markdown'
+import { Scene } from './Scene'
 import { Skeleton } from './ui'
+import { Walkthrough } from './Walkthrough'
 import { widgets } from './widgets'
+import { useWidth } from './widgets/useWidth'
 
 type OnState = (state: Record<string, unknown>) => void
 
-export function Visual({ visual, onState }: { visual: VisualSpec; onState: OnState }) {
+/** `narration`: the segment's narration; scene and code visuals step along with it while it is read aloud. */
+export function Visual({ visual, narration, onState }: { visual: VisualSpec; narration?: string; onState: OnState }) {
+  const steps = visual.steps ?? []
   return (
     <figure className="flex flex-1 flex-col gap-3">
       <div className="flex min-h-0 flex-1 flex-col justify-center">
-        <Boundary key={visual.kind + visual.widget + visual.code}>
+        <Boundary key={JSON.stringify(visual)}>
           {visual.kind === 'widget' ? (
             <Widget name={visual.widget} props={visual.props} onState={onState} />
+          ) : visual.kind === 'scene' ? (
+            <Walkthrough steps={steps} narration={narration} onState={onState}>
+              {(step) => <Scene actors={visual.actors ?? []} steps={steps} step={step} />}
+            </Walkthrough>
+          ) : visual.kind === 'code' ? (
+            <Walkthrough steps={steps} narration={narration} onState={onState}>
+              {(step) => <Code code={visual.code} language={visual.language ?? ''} lines={steps[step]?.lines ?? ''} />}
+            </Walkthrough>
           ) : visual.kind === 'mermaid' ? (
             <Mermaid code={visual.code} />
           ) : visual.kind === 'table' ? (
@@ -99,33 +115,57 @@ function loadMermaid() {
   return mermaid
 }
 
-function Mermaid({ code }: { code: string }) {
-  const [result, setResult] = useState<{ svg?: string; error?: string }>({})
+type Diagram = { code?: string; svg?: string; width?: number; error?: string }
+
+/** Mermaid code drawn as SVG, with the width it is drawn at by default; nothing for null code. */
+function useDiagram(code: string | null): Diagram {
+  const [result, setResult] = useState<Diagram>({})
   useEffect(() => {
+    if (code === null) return
     let live = true
     loadMermaid()
       .then((m) => m.render(`mermaid-${++diagramId}`, code))
       .then(
-        ({ svg }) => live && setResult({ svg }),
-        (e) => live && setResult({ error: e instanceof Error ? e.message : String(e) }),
+        ({ svg }) => live && setResult({ code, svg, width: svgWidth(svg) }),
+        (e) => live && setResult({ code, error: e instanceof Error ? e.message : String(e) }),
       )
     return () => {
       live = false
     }
   }, [code])
-  if (result.error)
-    return (
-      <Unavailable>
-        Couldn’t draw this diagram.
-        <pre className="mt-3 overflow-x-auto text-left font-mono text-xs whitespace-pre-wrap">{code}</pre>
-      </Unavailable>
-    )
-  if (!result.svg) return <Skeleton className="h-72" />
+  return result.code === code ? result : {}
+}
+
+const MIN_SCALE = 0.7 // smaller makes the diagram's text too small to read
+
+/** A Mermaid diagram, shrunk to fit its container down to MIN_SCALE. Narrower than that, a left-right flowchart
+ * is redrawn top-down; anything still too wide is shown at MIN_SCALE and scrolls sideways. */
+function Mermaid({ code }: { code: string }) {
+  const [ref, room] = useWidth<HTMLDivElement>()
+  const wide = useDiagram(code)
+  const down = topDown(code)
+  const tooWide = !!wide.width && wide.width * MIN_SCALE > room && down !== null
+  const tall = useDiagram(tooWide ? down : null)
+  const diagram = tooWide && !tall.error ? tall : wide
+  const width = diagram.width ?? 0
+  const scale = width ? Math.min(1, room / width) : 1
   return (
-    <div
-      className="flex justify-center overflow-x-auto [&_svg]:h-auto [&_svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: result.svg }}
-    />
+    <div ref={ref} className="overflow-x-auto">
+      {wide.error ? (
+        <Unavailable>
+          Couldn’t draw this diagram.
+          <pre className="mt-3 overflow-x-auto text-left font-mono text-xs whitespace-pre-wrap">{code}</pre>
+        </Unavailable>
+      ) : !diagram.svg ? (
+        <Skeleton className="h-72" />
+      ) : (
+        <div
+          className="mx-auto [&_svg]:h-auto [&_svg]:w-full"
+          style={scale < MIN_SCALE ? { width: width * MIN_SCALE } : { maxWidth: width || undefined }}
+          dangerouslySetInnerHTML={{ __html: diagram.svg }}
+        />
+      )}
+    </div>
   )
 }
 

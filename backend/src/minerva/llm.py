@@ -93,11 +93,14 @@ class LLM:
         workdir: Path,
         thinking: dict[str, str] | None = None,
         claude_models: dict[str, str] | None = None,
+        claude_effort: dict[str, str] | None = None,
     ):
         self.config = config
         # role -> reasoning_effort for OpenAI-compatible providers, chosen on the settings page. It replaces any
-        # reasoning_effort in the provider's extra_body; Claude keeps its default.
+        # reasoning_effort in the provider's extra_body.
         self.thinking = thinking or {}
+        # role -> --effort for claude_code providers; a role without one gets the CLI's own default.
+        self.claude_effort = claude_effort if claude_effort is not None else {}
         self.claude_models = claude_models or {}  # role -> model for claude_code providers, from the settings page
         self.workdir = workdir  # empty cwd for the claude CLI, so no project files leak into its context
         self._clients: dict[str, openai.AsyncOpenAI] = {}
@@ -135,7 +138,7 @@ class LLM:
         for p in self.providers(role, provider, allowed):
             try:
                 text_system = system(p) if callable(system) else system
-                effort = self.thinking.get(role)
+                effort = self._effort(p, role)
                 return await self._json_with_retry(p, text_system, user, model, check, effort, on_event), p.name
             except Unavailable as e:
                 failures.append(f"{p.name}: {e}")
@@ -149,7 +152,7 @@ class LLM:
         Falls through to the next provider only before the first event."""
         failures = []
         for p in self.providers(role, provider, allowed):
-            async with contextlib.aclosing(self._stream(p, system, messages, self.thinking.get(role))) as chunks:
+            async with contextlib.aclosing(self._stream(p, system, messages, self._effort(p, role))) as chunks:
                 try:
                     first = await anext(chunks)
                 except Unavailable as e:
@@ -162,6 +165,9 @@ class LLM:
                     yield chunk
                 return
         raise Unavailable("; ".join(failures))
+
+    def _effort(self, p: Provider, role: str) -> str | None:
+        return (self.thinking if p.kind == "openai" else self.claude_effort).get(role)
 
     async def available(self, p: Provider) -> bool:
         """Quick reachability check, cached for PROBE_TTL seconds."""
@@ -187,12 +193,12 @@ class LLM:
         schema = model.model_json_schema()
         messages = [{"role": "user", "content": user}]
 
-        def report(event: dict) -> None:  # providers say {"writing": True} when the output starts
+        def report(event: dict) -> None:  # {"writing": True} when the output starts, then {"output": text} as it comes
             on_event({"tool": {"name": "Write", "detail": model.__name__}} if "writing" in event else event)
 
         for attempt in range(2):
             text = await (self._openai_json(p, system, messages, schema, effort, report) if p.kind == "openai" else
-                          self._claude_json(p, system, transcript(messages), schema, report))
+                          self._claude_json(p, system, transcript(messages), schema, effort, report))
             try:
                 return parse_json(text, model, check and (lambda obj: check(obj, p)))
             except ValueError as e:
@@ -230,6 +236,7 @@ class LLM:
                 if not content:
                     on_event({"writing": True})
                 content += event["delta"]
+                on_event({"output": event["delta"]})
             else:
                 reasoning += event["thinking"]
                 on_event(event)
@@ -260,11 +267,13 @@ class LLM:
             if delta.content:
                 yield {"delta": delta.content}
 
-    async def _claude_json(self, p: Provider, system: str, prompt: str, schema: dict, on_event: OnEvent) -> str:
+    async def _claude_json(
+        self, p: Provider, system: str, prompt: str, schema: dict, effort: str | None, on_event: OnEvent
+    ) -> str:
         result = {}
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT):
-                events = self._claude_stream(p, system, prompt, ["--json-schema", json.dumps(schema)])
+                events = self._claude_stream(p, system, prompt, effort, ["--json-schema", json.dumps(schema)])
                 async with contextlib.aclosing(events):
                     async for event in events:
                         if "result" in event:
@@ -280,17 +289,20 @@ class LLM:
         if p.kind == "openai":
             events = self._openai_stream(p, system, messages, effort)
         else:
-            events = self._claude_stream(p, system, transcript(messages), [])
+            events = self._claude_stream(p, system, transcript(messages), effort, [])
         async with contextlib.aclosing(events):
             async for event in events:
                 if "result" not in event:
                     yield event
 
-    async def _claude_stream(self, p: Provider, system: str, prompt: str, args: list[str]) -> AsyncIterator[dict]:
+    async def _claude_stream(
+        self, p: Provider, system: str, prompt: str, effort: str | None, args: list[str]
+    ) -> AsyncIterator[dict]:
         """Runs the CLI with streamed output. Yields its events, then {"result": <the CLI's result event>}."""
-        proc = await self._claude(p, system, ["--output-format", "stream-json", "--include-partial-messages", "--verbose",
+        proc = await self._claude(p, system, effort, ["--output-format", "stream-json", "--include-partial-messages", "--verbose",
                                               *args])
         result = None
+        structured = False  # inside the StructuredOutput call, whose input is the JSON being written
         try:
             proc.stdin.write(prompt.encode())
             await proc.stdin.drain()
@@ -300,10 +312,14 @@ class LLM:
                 if event["type"] == "stream_event":
                     e = event["event"]
                     block = e.get("content_block", {})
+                    if e["type"] == "content_block_start":
+                        structured = block.get("name") == "StructuredOutput"
                     if e["type"] == "content_block_start" and block["type"] == "thinking":
                         yield {"thinking": ""}  # Claude may keep the text to itself; the step still shows
-                    elif e["type"] == "content_block_start" and block.get("name") == "StructuredOutput":
+                    elif e["type"] == "content_block_start" and structured:
                         yield {"writing": True}
+                    elif e["type"] == "content_block_delta" and e["delta"]["type"] == "input_json_delta" and structured:
+                        yield {"output": e["delta"]["partial_json"]}
                     elif e["type"] == "content_block_delta" and e["delta"]["type"] == "text_delta":
                         yield {"delta": e["delta"]["text"]}
                     elif e["type"] == "content_block_delta" and e["delta"]["type"] == "thinking_delta":
@@ -327,7 +343,7 @@ class LLM:
             raise LLMError(f"claude CLI failed: {detail}")
         yield {"result": result}
 
-    async def _claude(self, p: Provider, system: str, args: list[str]):
+    async def _claude(self, p: Provider, system: str, effort: str | None, args: list[str]):
         exe = shutil.which("claude")
         if not exe:
             raise Unavailable("claude CLI not found on PATH")
@@ -339,10 +355,13 @@ class LLM:
             # Web search only: no file or shell access. --allowedTools approves them without a prompt.
             "--tools", WEB_TOOLS, "--allowedTools", WEB_TOOLS,
             "--strict-mcp-config", "--no-session-persistence",
+            *(["--effort", effort] if effort else []),
             *args,
             cwd=self.workdir,
             # --setting-sources alone still loads ~/.claude/CLAUDE.md; keep the user's memory out of lessons.
-            env={**os.environ, "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
+            # A lesson is ~60 KB of JSON plus thinking: raise the CLI's default output cap so one isn't cut off.
+            env={**os.environ, "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+                 "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"},
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,  # read only on failure; the CLI writes little to it

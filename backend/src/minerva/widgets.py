@@ -7,6 +7,7 @@ import jsonschema
 
 from .config import REPO, Provider
 from .lesson import Lesson, Segment
+from .scene import normalize
 
 CATALOG_DIR = REPO / "shared" / "widgets"
 
@@ -27,18 +28,25 @@ def load_catalog() -> dict[str, dict]:
 
 def check_lesson(lesson: Lesson, provider: Provider, catalog: dict[str, dict]) -> list[str]:
     """Problems in the lesson's visuals, as messages for the model. Normalizes as it goes:
-    segment ids become s1..sN and widget props lose keys the schema doesn't define."""
+    segment ids become s1..sN, widget props lose keys the schema doesn't define, and scene and code visuals are
+    fixed by scene.normalize."""
     for i, seg in enumerate(lesson.segments):
         seg.id = f"s{i + 1}"
-    return check_segments(lesson.segments, provider, catalog)
+    problems = check_segments(lesson.segments, provider, catalog)
+    if lesson.analogy is None or not lesson.analogy.parts:
+        problems.append("analogy: write one everyday picture with at least one part")
+    return problems
 
 
 def check_segments(segments: list[Segment], provider: Provider, catalog: dict[str, dict]) -> list[str]:
-    """Problems in the segments' visuals (see check_lesson); strips unknown widget props."""
+    """Problems in the segments and their visuals (see check_lesson); strips unknown widget props."""
     problems = []
     for i, seg in enumerate(segments):
         v = seg.visual
         where = f"segments[{i}].visual"
+        if not seg.text.strip():
+            problems.append(f"segments[{i}].text: write the segment for reading")
+        problems += [f"{where}: {p}" for p in normalize(v, seg.narration)]
         if v.kind == "widget":
             entry = catalog.get(v.widget)
             if entry is None:

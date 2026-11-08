@@ -1,6 +1,6 @@
-// Settings: per job (lessons, tutor) which model runs it, which Claude model and how hard local models think;
+// Settings: per job (lessons, tutor) which model runs it, which Claude model and effort and how hard local models think;
 // narration; and what the server is configured with (read-only, from config.toml). Provider choice and
-// narration are kept on this device; the Claude model and thinking are saved on the server.
+// narration are kept on this device; the Claude model, effort and thinking are saved on the server.
 // A page at /settings, and a sheet inside a lesson (SettingsPanel).
 import { useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
@@ -9,6 +9,7 @@ import {
   lessonProviderKey,
   tutorProviderKey,
   voiceKey,
+  type ClaudeEffort,
   type Effort,
   type Role,
   type Settings as ServerSettings,
@@ -21,6 +22,13 @@ import { ErrorNote, Panel, Segmented, Skeleton, Switch } from './ui'
 
 const RATES = ['0.75', '1', '1.25', '1.5', '2'] as const
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'max']
+const CLAUDE_EFFORT_LABELS: Record<ClaudeEffort, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+}
 const ROLES: Role[] = ['lesson', 'tutor']
 
 /** "claude-opus-5-5" -> "Opus 5.5" */
@@ -138,6 +146,11 @@ function Models({ settings: s, onChange }: { settings: ServerSettings; onChange:
     const value = model === claude?.model ? '' : model
     save(api.setClaudeModel(role, value), { ...s, claude_models: { ...s.claude_models, [role]: value || undefined } })
   }
+  const setClaudeEffort = (role: Role, effort: string) =>
+    save(api.setClaudeEffort(role, effort as ClaudeEffort | ''), {
+      ...s,
+      claude_effort: { ...s.claude_effort, [role]: effort || undefined },
+    })
   const setEffort = (role: Role, effort: string) => {
     const value = (effort === configuredEffort ? '' : effort) as Effort | ''
     save(api.setThinking(role, value), { ...s, thinking: { ...s.thinking, [role]: value || undefined } })
@@ -185,6 +198,17 @@ function Models({ settings: s, onChange }: { settings: ServerSettings; onChange:
                 ))}
               </Select>
             ))}
+          {claude &&
+            row('Effort', (role) => (
+              <Select label={`${role} Claude effort`} value={s.claude_effort[role] ?? ''} onChange={(e) => setClaudeEffort(role, e)}>
+                <option value="">Default</option>
+                {s.claude_effort_options.map((e) => (
+                  <option key={e} value={e}>
+                    {CLAUDE_EFFORT_LABELS[e]}
+                  </option>
+                ))}
+              </Select>
+            ))}
           {local &&
             row('Thinking', (role) => (
               <Select label={`${role} local thinking`} value={s.thinking[role] ?? configuredEffort ?? ''} onChange={(e) => setEffort(role, e)}>
@@ -199,7 +223,7 @@ function Models({ settings: s, onChange }: { settings: ServerSettings; onChange:
         </div>
         <p className="mt-3 text-xs leading-relaxed text-muted">
           Auto tries {s.roles.lesson.join(' → ')} for lessons and {s.roles.tutor.join(' → ')} for the tutor. Thinking
-          applies to local models. Model choice is per device; Claude model and thinking apply everywhere.
+          applies to local models and Effort to Claude. Model choice is per device; the rest applies everywhere.
         </p>
       </Panel>
       {error && <ErrorNote error={error} />}

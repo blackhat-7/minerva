@@ -31,12 +31,15 @@ export type Settings = {
   thinking: Partial<Record<Role, Effort>> // set in the app; missing = from config.toml
   claude_models: Partial<Record<Role, string>> // set in the app; missing = the provider's model in config.toml
   claude_model_options: string[]
+  claude_effort: Partial<Record<Role, ClaudeEffort>> // set in the app; missing = the Claude CLI's default
+  claude_effort_options: ClaudeEffort[]
   learner: string
   config_path: string
 }
 
 export type Role = 'lesson' | 'tutor'
 export type Effort = 'low' | 'medium' | 'high' | 'max'
+export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** localStorage keys (JSON, as usePersistentState writes them) for the models the profile chose on this device;
  * '' = the server's role order. */
@@ -64,6 +67,7 @@ export type LessonRecord = {
   diagnostic: Diagnostic | null
   lesson: Lesson | null
   activity?: Step[] // while generating: what the model has done so far
+  draft?: Draft // while generating: the lesson written so far
   progress: Record<string, unknown>
 }
 
@@ -80,6 +84,10 @@ export type ExplainResult = {
   misconceptions: string[]
   follow_up: string
 }
+
+/** A lesson being written: its title, each section's title and takeaway so far, and which later parts
+ * (problems, pitfalls, explain_back, cards) have started. */
+export type Draft = { title: string; segments: { title: string; one_line: string }[]; parts: string[] }
 
 /** What a model did on the way to its answer: thinking, and tool calls such as web searches. */
 export type Step = { kind: 'thinking'; text: string } | { kind: 'tool'; name: string; detail: string }
@@ -108,6 +116,7 @@ export type TutorRequest = {
     widget_state: Record<string, unknown>
     question: Question | null
     attempt: string
+    correct?: boolean | null // whether the saved attempt was right; null = not answered yet
     narration_heard?: string
   }
   messages: ChatMessage[]
@@ -152,6 +161,9 @@ export const api = {
   settings: () => request<Settings>('GET', '/settings'),
   /** How hard local models think for a role, on every device; '' = from config.toml. */
   setThinking: (role: Role, effort: Effort | '') => request<void>('PUT', '/settings/thinking', { role, effort }),
+  /** How hard Claude thinks for a role (the CLI's --effort), on every device; '' = the CLI's own default. */
+  setClaudeEffort: (role: Role, effort: ClaudeEffort | '') =>
+    request<void>('PUT', '/settings/claude_effort', { role, effort }),
   /** Which Claude model a role uses, on every device; '' = the one in config.toml. */
   setClaudeModel: (role: Role, model: string) => request<void>('PUT', '/settings/claude_model', { role, model }),
 

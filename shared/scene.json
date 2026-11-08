@@ -1,0 +1,31 @@
+{
+  "cols": 4,
+  "rows": 4,
+  "icons": [
+    "cpu", "microchip", "circuit-board", "server", "database", "hard-drive", "memory-stick", "monitor", "laptop",
+    "smartphone", "keyboard", "printer", "router", "wifi", "network", "cable", "plug", "battery", "terminal", "code",
+    "braces", "binary", "bug", "cloud", "globe", "satellite-dish", "radio-tower", "signal", "lock", "lock-open", "key",
+    "shield", "shield-check", "fingerprint", "settings", "wrench", "hammer", "gauge", "zap", "flame", "thermometer",
+    "snowflake", "timer", "clock", "hourglass", "calendar", "bell", "search", "eye", "filter", "scissors",
+    "calculator", "sigma", "activity", "trending-up", "trending-down", "file", "file-text", "file-code", "folder",
+    "archive", "package", "box", "boxes", "container", "layers", "table", "list", "list-ordered", "inbox", "send",
+    "download", "upload", "save", "trash-2", "recycle", "workflow", "git-branch", "git-merge", "git-fork", "split",
+    "merge", "repeat", "refresh-cw", "rotate-ccw", "shuffle", "infinity", "link", "unlink", "hash", "percent",
+    "user", "users", "brain", "bot", "message-circle", "message-square", "mail", "mailbox", "phone", "mic",
+    "headphones", "megaphone", "volume-2", "hand", "smile", "frown", "ghost",
+    "book", "book-open", "notebook", "sticky-note", "clipboard", "clipboard-list", "pencil", "pen", "eraser", "ruler",
+    "scale", "magnet", "lightbulb", "puzzle", "target", "flag", "map", "map-pin", "compass", "route", "signpost",
+    "house", "building", "building-2", "factory", "warehouse", "store", "school", "library", "landmark", "truck",
+    "car", "bus", "plane", "rocket", "ship", "bike", "fuel", "droplet", "waves", "wind", "sun", "moon", "tree-pine",
+    "leaf", "sprout", "mountain", "anchor", "trophy", "medal", "gift", "shopping-cart", "coins", "wallet", "banknote",
+    "receipt", "ticket", "tag", "crown", "gem", "door-open", "door-closed", "lamp", "tv", "camera", "image", "film",
+    "music", "gamepad-2", "dice-5", "atom", "dna", "microscope", "flask-conical", "test-tube", "pill", "heart",
+    "heart-pulse", "coffee", "pizza", "cookie", "utensils", "chef-hat", "cooking-pot", "egg", "fish", "cat", "dog",
+    "bird", "rabbit", "turtle", "snail", "footprints", "glasses", "shirt", "star", "sparkles", "check", "x", "ban",
+    "triangle-alert"
+  ],
+  "languages": [
+    "bash", "python", "java", "kotlin", "javascript", "typescript", "json", "yaml", "sql", "go", "rust", "c", "cpp",
+    "csharp", "dockerfile", "xml", "css", "plaintext"
+  ]
+}

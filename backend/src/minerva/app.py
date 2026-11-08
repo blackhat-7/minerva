@@ -1,7 +1,6 @@
 """HTTP API (docs/api.md) and the built frontend."""
 
 import asyncio
-import functools
 import hashlib
 import json
 import logging
@@ -19,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import glossary, prompts
 from .config import REPO, Config, Profile, Speech, config_path, data_dir, load_config
-from .lesson import Diagnostic, Lesson, Question, SegmentEdit
+from .lesson import Diagnostic, Lesson, Question, SegmentEdit, draft
 from .llm import LLM, LLMError, Unavailable, add_step
 from .search import web_search
 from .store import Store
@@ -67,6 +66,7 @@ class TutorContext(BaseModel):
     question: Question | None = None
     attempt: str = ""
     narration_heard: str = ""  # the narration played before the learner interrupted it
+    correct: bool | None = None  # question: None = not submitted yet, False = submitted and wrong
 
 
 class ChatMessage(BaseModel):
@@ -84,11 +84,17 @@ class TutorBody(BaseModel):
 
 
 CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
+CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 
 class ClaudeModelBody(BaseModel):
     role: Literal["lesson", "tutor"]
     model: str  # one of CLAUDE_MODELS, or "" for the provider's model in config.toml
+
+
+class ClaudeEffortBody(BaseModel):
+    role: Literal["lesson", "tutor"]
+    effort: Literal["", "low", "medium", "high", "xhigh", "max"]  # "" = the CLI's own default
 
 
 class ThinkingBody(BaseModel):
@@ -131,13 +137,17 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     # Settings changed in the app (the settings page), kept apart from config.toml.
     prefs_path = data / "settings.json"
     prefs = json.loads(prefs_path.read_text()) if prefs_path.exists() else {}
-    llm = LLM(config, data / "claude-cwd", thinking=prefs.get("thinking"), claude_models=prefs.get("claude_models"))
+    llm = LLM(
+        config, data / "claude-cwd", thinking=prefs.get("thinking"), claude_models=prefs.get("claude_models"),
+        claude_effort=prefs.get("claude_effort", {"lesson": "high"}),  # lessons are the quality-critical job
+    )
 
     def save_prefs() -> None:
-        prefs.update(thinking=llm.thinking, claude_models=llm.claude_models)
+        prefs.update(thinking=llm.thinking, claude_models=llm.claude_models, claude_effort=llm.claude_effort)
         prefs_path.write_text(json.dumps(prefs, indent=1))
     tasks: set[asyncio.Task] = set()  # keeps background generations referenced until done
     activity: dict[str, list[dict]] = {}  # lesson id -> thinking and tool steps so far, while it generates
+    written: dict[str, str] = {}  # lesson id -> the JSON the model has written so far, while it generates
 
     app = FastAPI(title="Minerva")
     app.state.llm = llm
@@ -234,6 +244,8 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
             "thinking": llm.thinking,
             "claude_models": llm.claude_models,
             "claude_model_options": CLAUDE_MODELS,
+            "claude_effort": llm.claude_effort,
+            "claude_effort_options": CLAUDE_EFFORTS,
             "learner": about(me).strip(),
             "config_path": str(config_path()),
         }
@@ -256,6 +268,14 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
             llm.claude_models.pop(body.role, None)
         save_prefs()
 
+    @app.put("/api/settings/claude_effort", status_code=204)
+    async def set_claude_effort(body: ClaudeEffortBody) -> None:
+        if body.effort:
+            llm.claude_effort[body.role] = body.effort
+        else:
+            llm.claude_effort.pop(body.role, None)
+        save_prefs()
+
     # --- lessons ---
 
     @app.post("/api/lessons")
@@ -274,7 +294,15 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         me: str, lesson_id: str, topic: str, questions: list[Question], answers: list[str], provider: str | None
     ):
         steps = activity[lesson_id] = []
-        on_event = functools.partial(add_step, steps)
+        written[lesson_id] = ""
+
+        def on_event(event: dict) -> None:
+            if event.get("tool", {}).get("name") == "Write":
+                written[lesson_id] = ""  # a new output, or the retry after an invalid one, starts over
+            if "output" in event:
+                written[lesson_id] += event["output"]
+            else:
+                add_step(steps, event)
         try:
             profile = ""
             if answers:
@@ -283,7 +311,7 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
                     provider=provider, allowed=allowed(me), on_event=on_event,
                 )
                 profile = result.profile
-                log.info("lesson %s learner profile: %s", lesson_id, profile)
+                store.update_lesson(lesson_id, learner=profile)
             catalog = load_catalog()
             if config.search.enabled:
                 on_event({"tool": {"name": "WebSearch", "detail": topic}})
@@ -303,7 +331,7 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
             log.exception("generating lesson %s failed", lesson_id)
             store.update_lesson(lesson_id, status="failed", error=str(e) or type(e).__name__)
         finally:
-            del activity[lesson_id]
+            del activity[lesson_id], written[lesson_id]
 
     @app.post("/api/lessons/{lesson_id}/generate", status_code=202)
     async def start_generation(lesson_id: str, body: GenerateBody, me: Me) -> dict:
@@ -332,7 +360,8 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         result, _ = await llm.complete_json(
             "lesson",
             lambda p: prompts.edit_system(catalog, p.html),
-            prompts.edit_user(record["topic"], lesson, segment, body.instruction.strip(), about(me)),
+            prompts.edit_user(record["topic"], lesson, segment, body.instruction.strip(), about(me),
+                             record["learner"]),
             SegmentEdit,
             provider=body.provider,
             allowed=allowed(me),
@@ -362,7 +391,9 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
     @app.get("/api/lessons/{lesson_id}")
     async def get_lesson(lesson_id: str, me: Me) -> dict:
         record = lesson_or_404(me, lesson_id)
-        return {**record, "activity": activity[lesson_id]} if lesson_id in activity else record
+        if lesson_id not in activity:
+            return record
+        return {**record, "activity": activity[lesson_id], "draft": draft(written[lesson_id])}
 
     @app.put("/api/lessons/{lesson_id}/progress", status_code=204)
     async def save_progress(lesson_id: str, body: ProgressBody, me: Me) -> None:
@@ -415,10 +446,10 @@ def create_app(config: Config | None = None, data: Path | None = None) -> FastAP
         record, lesson = ready_lesson(me, body.lesson_id)
         ctx = body.context
         context = prompts.tutor_context(lesson, body.segment_id, ctx.widget_state, ctx.question, ctx.attempt, body.voice,
-                                         ctx.narration_heard)
+                                         ctx.narration_heard, ctx.correct)
         messages = [m.model_dump() for m in body.messages]
         messages[-1]["content"] = f"{context}\n\n{messages[-1]['content']}"
-        system = prompts.tutor_system(record["topic"], lesson, about(me))
+        system = prompts.tutor_system(record["topic"], lesson, about(me), record["learner"])
 
         async def events():
             try:

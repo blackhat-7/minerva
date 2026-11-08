@@ -3,7 +3,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from './api'
-import { pause, resume, resumeNarration, rewind, seek, setRate, useAudio } from './audio'
+import { pause, resume, resumeNarration, rewind, seek, setRate, setVolume, useAudio } from './audio'
 import { useAsync, useHotkeys, usePersistentState } from './hooks'
 import { Icon } from './icons'
 import { toggleAsk, useListening } from './listen'
@@ -114,6 +114,22 @@ export function Narration({
           <span className={`truncate ${mic.phase === 'off' ? 'max-[400px]:hidden' : ''}`}>{MIC_LABELS[mic.phase]}</span>
         </Button>
       )}
+      <Popover icon="volume" label="Volume">
+        <label className="flex min-h-11 items-center gap-3 px-3 text-sm">
+          <span className="text-muted">Volume</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={audio.volume}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            style={{ '--played': `${audio.volume * 100}%` } as CSSProperties}
+            className="scrubber h-4 flex-1 cursor-pointer rounded-full"
+          />
+          <span className="tabular w-9 text-right text-muted">{Math.round(audio.volume * 100)}%</span>
+        </label>
+      </Popover>
       <Popover icon="more" label="Narration settings">
         <div className="px-2 pt-2 pb-1">
           <Segmented

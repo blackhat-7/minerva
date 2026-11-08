@@ -69,5 +69,6 @@ cd frontend && npx vite                   # dev server, proxies /api to :8765; w
 
 - `docs/api.md`: the HTTP contract.
 - `backend/src/minerva/lesson.py` and `frontend/src/lesson.ts`: the lesson format, mirrored; change both together.
+- `shared/scene.json` (grid size, icon names, code languages) is shared by the lesson prompt and the frontend's scene player; `backend/src/minerva/scene.py` normalizes generated scene and code visuals.
 - Widgets: a component in `frontend/src/widgets/` plus a catalog entry in `shared/widgets/<name>.json` (the schema the lesson generator sees). Pure math lives in `<name>.math.ts` with tests.
 - The PWA service worker caches the build: after deploying a new build, a page needs one reload to pick it up.

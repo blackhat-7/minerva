@@ -101,16 +101,25 @@ if args[:2] == ["auth", "status"]:
     sys.exit(0)
 with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
     f.write(json.dumps({{"args": args, "stdin": sys.stdin.read(), "cwd": os.getcwd(),
-                        "no_memory": os.environ.get("CLAUDE_CODE_DISABLE_CLAUDE_MDS")}}) + "\\n")
+                        "no_memory": os.environ.get("CLAUDE_CODE_DISABLE_CLAUDE_MDS"),
+                        "max_output": os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS")}}) + "\\n")
 fail = os.environ.get("FAKE_CLAUDE_FAIL") == "1"
 def tool(name, **input):
     return {{"type": "tool_use", "id": "t", "name": name, "input": input}}
 if "--json-schema" in args:
     print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_start", "index": 0,
                        "content_block": {{"type": "thinking", "thinking": ""}}}}}}))
-    print(json.dumps({{"type": "assistant", "message": {{"content": [tool("WebSearch", query="rooflines", mode="x")]}}}}))
+    def json_delta(index, text):
+        print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_delta", "index": index,
+                           "delta": {{"type": "input_json_delta", "partial_json": text}}}}}}))
     print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_start", "index": 1,
+                       "content_block": tool("WebSearch")}}}}))
+    json_delta(1, '{{"query": "rooflines"}}')  # a tool's input, not the output
+    print(json.dumps({{"type": "assistant", "message": {{"content": [tool("WebSearch", query="rooflines", mode="x")]}}}}))
+    print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_start", "index": 2,
                        "content_block": tool("StructuredOutput")}}}}))
+    json_delta(2, '{{"profile": ')
+    json_delta(2, '"structured"}}')
     print(json.dumps({{"type": "assistant", "message": {{"content": [tool("StructuredOutput", profile="structured")]}}}}))
     print(json.dumps({{"type": "result", "is_error": fail, "result": "rate limited" if fail else "",
                        "structured_output": None if fail else {{"profile": "structured"}}}}))
@@ -152,7 +161,8 @@ def test_claude_json(claude_config, fake_claude, tmp_path):
     )
     assert (result.profile, used) == ("structured", "claude")
     assert events == [{"thinking": ""}, {"tool": {"name": "WebSearch", "detail": "rooflines"}},
-                      {"tool": {"name": "Write", "detail": "Profile"}}]
+                      {"tool": {"name": "Write", "detail": "Profile"}},
+                      {"output": '{"profile": '}, {"output": '"structured"}'}]
 
     [call] = fake_claude()
     args = call["args"]
@@ -236,8 +246,19 @@ def test_openai_json_streams_thinking(config, tmp_path, monkeypatch):
                     chunk(content='"p"}')])
     result, _ = asyncio.run(llm.complete_json("lesson", "s", "u", prompts.Profile, on_event=events.append))
     assert result.profile == "p"
-    assert events == [{"thinking": "Bytes "}, {"thinking": "first."}, {"tool": {"name": "Write", "detail": "Profile"}}]
+    assert events == [{"thinking": "Bytes "}, {"thinking": "first."}, {"tool": {"name": "Write", "detail": "Profile"}},
+                      {"output": '{"profile": '}, {"output": '"p"}'}]
 
     replies.append([chunk(reasoning_content='{"profile": "only in reasoning"}')])  # some servers put it all there
     result, _ = asyncio.run(llm.complete_json("lesson", "s", "u", prompts.Profile))
     assert result.profile == "only in reasoning"
+
+
+def test_claude_effort_is_passed_to_the_cli_per_role(claude_config, fake_claude, tmp_path):
+    llm = LLM(claude_config, tmp_path / "cwd", thinking={"lesson": "max"}, claude_effort={"lesson": "high"})
+    asyncio.run(llm.complete_json("lesson", "s", "u", prompts.Profile))
+    asyncio.run(llm.complete_json("tutor", "s", "u", prompts.Profile))  # no effort chosen: the CLI's default
+    lesson, tutor = fake_claude()
+    assert lesson["args"][lesson["args"].index("--effort") + 1] == "high"  # not the OpenAI thinking setting
+    assert "--effort" not in tutor["args"]
+    assert lesson["max_output"] == "64000"

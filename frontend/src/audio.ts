@@ -18,9 +18,11 @@ const listeners = new Set<() => void>()
 let snapshot = {
   state: 'idle' as PlayState,
   rate: Number(localStorage.getItem('minerva.rate')) || 1,
+  volume: Number(localStorage.getItem('minerva.volume') ?? 1),
   held: null as Held | null, // narration paused for a conversation, to resume from its sentence
   spoken: null as Spoken | null, // the narration sentence playing (or held), for highlighting
 }
+el.volume = snapshot.volume
 /** Which narration text is being read, and the index of its sentence (see `sentences`). */
 export type Spoken = { text: string; index: number }
 let unlocked = false
@@ -74,6 +76,7 @@ const engine: Engine<Clip> = {
         u.voice = bestVoice()
         u.lang = u.voice?.lang ?? 'en-US'
         u.rate = snapshot.rate
+        u.volume = snapshot.volume
         u.onend = u.onerror = () => resolve()
         speechSynthesis.speak(u)
       }
@@ -115,8 +118,14 @@ export function audioContext() {
 }
 
 /** Starts speaking text that arrives in pieces (a streaming reply): push sentences, then end().
- * Replaces anything playing. `onEnd` runs only if it plays to the end. */
+ * Replaces anything playing. `onEnd` runs only if it plays to the end. Narration it interrupted stays held;
+ * narration that had already finished stops counting as being read (its last sentence isn't `spoken` any more). */
 export function speakStream(onEnd?: () => void) {
+  if (!snapshot.held) update({ spoken: null })
+  return utterance(onEnd)
+}
+
+function utterance(onEnd?: () => void) {
   const mine = ++session
   queue.start(onEnd)
   return {
@@ -131,7 +140,7 @@ let narration: Narration | null = null
 let heldNarration: Narration | null = null
 
 function narrateFrom(text: string, all: string[], base: number, onEnd?: () => void) {
-  const stream = speakStream(onEnd)
+  const stream = utterance(onEnd)
   narration = { text, sentences: all, base, session, onEnd }
   update({ held: null })
   all.slice(base).forEach(stream.push)
@@ -214,6 +223,13 @@ export function setRate(rate: number) {
   localStorage.setItem('minerva.rate', String(rate))
   el.playbackRate = rate // speechSynthesis picks the rate up on the next sentence
   update({ rate })
+}
+
+/** Sets the volume (0 to 1) of narration and spoken replies. Phones may ignore it (iOS uses the hardware buttons). */
+export function setVolume(volume: number) {
+  localStorage.setItem('minerva.volume', String(volume))
+  el.volume = volume // speechSynthesis picks the volume up on the next sentence
+  update({ volume })
 }
 
 export function useAudio() {

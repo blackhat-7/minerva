@@ -145,6 +145,87 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Code shows the characters to type: no ligatures (JetBrains Mono would draw >= as ≥). */
+code,
+pre {
+  font-variant-ligatures: none;
+}
+
+/* A scene actor pointed at during its step (Scene.tsx): a ring in its color (--c) that glows softly. */
+.scene-lit {
+  box-shadow:
+    0 0 0 2px var(--c),
+    0 0 16px 2px color-mix(in srgb, var(--c) 35%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .scene-lit {
+    animation: scene-glow 1.6s ease-in-out infinite;
+  }
+}
+@keyframes scene-glow {
+  50% {
+    box-shadow:
+      0 0 0 2px var(--c),
+      0 0 28px 8px color-mix(in srgb, var(--c) 45%, transparent);
+  }
+}
+
+/* Syntax highlighting (highlight.js classes) in code visuals and markdown code blocks, in the chart colors. */
+.hljs-comment,
+.hljs-quote {
+  color: var(--color-muted);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-meta .hljs-keyword {
+  color: var(--color-chart-5);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-template-tag,
+.hljs-addition,
+.hljs-meta .hljs-string {
+  color: var(--color-chart-3);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--color-chart-4);
+}
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--color-chart-1);
+}
+.hljs-type,
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-meta {
+  color: var(--color-chart-6);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-property,
+.hljs-subst {
+  color: var(--color-chart-2);
+}
+.hljs-deletion {
+  color: var(--color-bad);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

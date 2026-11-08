@@ -58,16 +58,18 @@ export function Tutor({
   const abort = useRef<AbortController>(null)
   const abandoned = useRef<AbortController>(null) // a reply cut off by leaving its chat: write nothing back
   const scroller = useRef<HTMLDivElement>(null)
+  const pinned = useRef(true) // follow new text only while the reader is at the bottom
   const [browsing, setBrowsing] = useState(false)
 
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
+    if (pinned.current) scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
   }, [messages])
   useEffect(() => () => abort.current?.abort(), [])
 
   async function send(text: string, voice: boolean, history = messages) {
     text = text.trim() || (quote ? 'Explain this.' : '')
     if (!text || busy) return
+    pinned.current = true
     setInput('')
     setError('')
     const sent: ChatMessage[] = [...history, { role: 'user', content: text, at: where, ...(quote && { quote }) }]
@@ -152,6 +154,7 @@ export function Tutor({
     interruptAudio()
   }
   function openChat(id: string) {
+    pinned.current = true
     if (id !== chatId) leave()
     onOpenChat(id)
     setBrowsing(false)
@@ -199,7 +202,14 @@ export function Tutor({
       {browsing ? (
         <ChatList chats={chats} chatId={chatId} onOpen={openChat} onDelete={deleteChat} />
       ) : (
-        <div ref={scroller} className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-3">
+        <div
+          ref={scroller}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+          }}
+          className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-3"
+        >
           {messages.length === 0 && (
             <div className="m-auto flex max-w-xs flex-col items-center gap-5 py-6 text-center">
               <p className="text-muted">

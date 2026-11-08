@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { Button, ErrorNote, field, Spinner } from './ui'
 
 const SUGGESTIONS = [
-  'Add an interactive, animated visual of this',
+  'Animate how this works, step by step',
   'Explain it more simply',
   'Go deeper, with real numbers',
   'Add a worked example',

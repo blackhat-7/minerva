@@ -1,6 +1,6 @@
 # HTTP API
 
-All JSON. The lesson types are in `backend/src/minerva/lesson.py` (mirrored in `frontend/src/lesson.ts`).
+All JSON. The lesson types are in `backend/src/minerva/lesson.py` (mirrored in `frontend/src/lesson.ts`). Beyond the basics, a lesson has an `analogy`, each segment has `text` (written for reading) beside `narration`, and a visual may be `kind: "scene"` (actors on a grid, with timed steps) or `kind: "code"` (with a `language` and highlighted `lines` per step); see `lesson.py`. Scene and code visuals are normalized by `scene.py` before they are stored.
 The backend serves the built frontend (`frontend/dist`) at `/`; in dev, Vite proxies `/api` to `127.0.0.1:8765`.
 
 ## Profiles
@@ -27,14 +27,15 @@ Behind an auth proxy (Caddy + Authelia forward auth) the `Remote-User` header ca
 
 `GET /api/settings` → the server's configuration for the settings page, read-only and without keys:
 `{providers: [{name, kind, model, base_url, html, extra_body, available}], roles, tts: {base_url, model, voice, voices} | null,
-stt: … | null, thinking, claude_models, claude_model_options, learner, config_path}`.
+stt: … | null, thinking, claude_models, claude_model_options, claude_effort, claude_effort_options, learner, config_path}`.
 
 - `PUT /api/settings/thinking {role: "lesson"|"tutor", effort: ""|"low"|"medium"|"high"|"max"}` → `204`. How hard OpenAI-compatible (local) providers think for that job; replaces `reasoning_effort` from `extra_body`. `""` falls back to `config.toml`.
 - `PUT /api/settings/claude_model {role, model}` → `204`. The Claude model for that job, one of `claude_model_options`; `""` falls back to `config.toml`.
+- `PUT /api/settings/claude_effort {role, effort: ""|"low"|"medium"|"high"|"xhigh"|"max"}` → `204`. The `--effort` level the Claude CLI uses for that job, one of `claude_effort_options`; `""` leaves the CLI's own default. Without a saved value the lesson job starts at `high`.
 
-Both are saved in `data/settings.json` and apply on every device.
+All three are saved in `data/settings.json` and apply on every device.
 
-`/api/status` and `/api/settings` are per profile: they list only the profile's providers and the role lists filtered to them. In settings, `learner` is the profile's `about`. Thinking and Claude-model settings are global.
+`/api/status` and `/api/settings` are per profile: they list only the profile's providers and the role lists filtered to them. In settings, `learner` is the profile's `about`. Thinking, Claude-model and Claude-effort settings are global.
 
 `available` is a quick reachability check. With `tts: false` the frontend speaks with the browser's `speechSynthesis`; with `stt: false` it hides the mic.
 
@@ -47,6 +48,7 @@ Both are saved in `data/settings.json` and apply on every device.
   "id": "…", "topic": "…", "created_at": "ISO-8601", "provider": "claude",
   "status": "diagnostic | generating | ready | failed",
   "error": "",
+  "learner": "what the diagnostic showed the learner knows; \"\" if there was none",
   "diagnostic": {"questions": [Question]} | null,
   "lesson": Lesson | null,
   "progress": {}
@@ -56,7 +58,7 @@ Both are saved in `data/settings.json` and apply on every device.
 `progress` is opaque to the backend. The frontend owns its shape and saves it so a lesson resumes on any device.
 
 - `POST /api/lessons {topic, provider?}` → `LessonRecord` with `status: "diagnostic"` and 2–4 diagnostic questions.
-- `POST /api/lessons/{id}/generate {answers: [string], provider?}` → `202` + `LessonRecord` with `status: "generating"`. One answer per diagnostic question, `""` for "don't know"; `[]` skips the diagnostic. Generation runs in the background; poll `GET /api/lessons/{id}` until `ready` or `failed`.
+- `POST /api/lessons/{id}/generate {answers: [string], provider?}` → `202` + `LessonRecord` with `status: "generating"`. One answer per diagnostic question, `""` for "don't know"; `[]` skips the diagnostic. Generation runs in the background; poll `GET /api/lessons/{id}` until `ready` or `failed`. While it runs, the record also has `activity` (the model's thinking and tool calls: `[{kind: "thinking", text} | {kind: "tool", name, detail}]`, where a `Write` tool marks the output starting) and `draft`, the lesson so far: `{title, segments: [{title, one_line}], parts}`, `parts` listing which of `problems`, `pitfalls`, `explain_back`, `cards` have started.
 - `POST /api/lessons/{id}/segments/{segment_id}/edit {instruction, provider?}` → `LessonRecord`. Rewrites that segment as the learner asks, under the same rules and validation as generation, matching the segments around it. The model may add one new segment after it (a fresh id); new glossary terms are merged. Synchronous: a minute or two.
 - `GET /api/lessons` → `[{id, topic, title, status, created_at}]`, newest first.
 - `GET /api/lessons/{id}` → `LessonRecord`.
@@ -79,12 +81,15 @@ Both are saved in `data/settings.json` and apply on every device.
   "lesson_id": "…",
   "segment_id": "s2",
   "context": {"widget_state": {}, "question": Question, "attempt": "learner's answer so far",
-              "narration_heard": "narration played before the learner interrupted it"},
+              "narration_heard": "narration played before the learner interrupted it",
+              "correct": null},
   "messages": [{"role": "user", "content": "…"}],
   "voice": false,
   "provider": null
 }
 ```
+
+`context.correct` is `null` until the learner submits the question, then `false` if the answer was wrong (the frontend leaves out questions answered right).
 
 Streams `text/event-stream`: `data: {"delta": "…"}` events, then `data: {"done": true}` (or `data: {"error": "…"}`). With `voice: true` replies are short and written to be spoken (no markdown, no LaTeX).
 

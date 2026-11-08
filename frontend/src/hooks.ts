@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 
 export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -65,4 +65,53 @@ export function usePersistentState<T>(key: string, initial: T) {
   })
   useEffect(() => localStorage.setItem(key, JSON.stringify(value)), [key, value])
   return [value, setValue] as const
+}
+
+type Offset = { x: number; y: number }
+
+/** Moves an offset by (dx, dy), as far as keeps `rect` (the element's box at that offset) inside the window. */
+function shift(o: Offset, rect: DOMRect, dx: number, dy: number): Offset {
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi))
+  return {
+    x: o.x + clamp(dx, -rect.left, innerWidth - rect.right),
+    y: o.y + clamp(dy, -rect.top, innerHeight - rect.bottom),
+  }
+}
+
+/** Lets the user drag an element around the screen by a grip. Pass `setElement` as the element's ref, put
+ * `style` on it and `onPointerDown` on the grip. The position is kept in localStorage under `key`, and pulled
+ * back on screen when the window or the element changes size. */
+export function useDraggable<T extends HTMLElement>(key: string) {
+  const [offset, setOffset] = usePersistentState<Offset>(key, { x: 0, y: 0 })
+  const [el, setElement] = useState<T | null>(null)
+
+  useEffect(() => {
+    if (!el) return
+    const fit = () => setOffset((o) => shift(o, el.getBoundingClientRect(), 0, 0))
+    const observer = new ResizeObserver(fit)
+    observer.observe(el)
+    window.addEventListener('resize', fit)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', fit)
+    }
+  }, [el, setOffset])
+
+  // The grip captures the pointer, so the drag keeps following it even off the grip.
+  const onPointerDown = (e: PointerEvent<HTMLElement>) => {
+    if (!el) return
+    const grip = e.currentTarget
+    const [x, y, rect] = [e.clientX, e.clientY, el.getBoundingClientRect()]
+    const move = (m: globalThis.PointerEvent) => setOffset(shift(offset, rect, m.clientX - x, m.clientY - y))
+    const end = () => {
+      grip.removeEventListener('pointermove', move)
+      grip.removeEventListener('pointerup', end)
+      grip.removeEventListener('pointercancel', end)
+    }
+    grip.setPointerCapture(e.pointerId)
+    grip.addEventListener('pointermove', move)
+    grip.addEventListener('pointerup', end)
+    grip.addEventListener('pointercancel', end)
+  }
+  return { setElement, style: { translate: `${offset.x}px ${offset.y}px` }, onPointerDown }
 }

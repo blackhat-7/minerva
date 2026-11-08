@@ -28,11 +28,12 @@ def choice(**kw) -> dict:
 
 
 def lesson_json(props: dict | None = None) -> str:
-    segment = {"title": "", "one_line": "", "narration": "Words.", "key_points": ["k"], "task": "", "predict": None,
+    segment = {"title": "", "one_line": "", "text": "Words.", "narration": "Words.", "key_points": ["k"], "task": "", "predict": None,
                "check": None}
     return json.dumps({
         "title": "Rooflines",
         "summary": "Decode is memory-bound.",
+        "analogy": {"picture": "A kitchen.", "parts": [{"familiar": "cook", "real": "GPU"}], "limits": "No queues."},
         "glossary": [{"term": "HBM", "definition": "High-bandwidth memory."},
                      {"term": "roofline", "definition": "A chart."}],
         "segments": [

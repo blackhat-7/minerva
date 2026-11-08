@@ -22,7 +22,7 @@ type Props = {
   onPredict: (a: Attempt) => void
   onCheck: (a: Attempt) => void
   onDraft: (text: string) => void
-  onWidgetState: (state: Record<string, unknown>) => void
+  onWidgetState: (segmentId: string, state: Record<string, unknown>) => void
   canContinue: boolean
   onContinue: () => void
   dock: Dock
@@ -123,7 +123,7 @@ function Learn({
       >
         {hasVisual && (
           <Panel className="flex min-h-72 flex-col overflow-x-auto p-3 sm:p-6 lg:min-h-[calc(100dvh-17rem)] lg:self-start">
-            <Visual visual={seg.visual} onState={onWidgetState} />
+            <Visual visual={seg.visual} narration={seg.narration} onState={(state) => onWidgetState(seg.id, state)} />
           </Panel>
         )}
 
