@@ -1,0 +1,26 @@
+{
+  "name": "parallel_memory",
+  "description": "Per-GPU memory for training a transformer with data (DP) x tensor (TP) x pipeline (PP) parallelism and ZeRO stage 0-3 (ZeRO-3 = FSDP full shard), mixed-precision Adam. A stacked horizontal bar (params, grads, optimizer states, activations, in GiB) is drawn against the chosen GPU's capacity line and turns red (hatched overflow) when it does not fit. Model states use the standard 16 bytes/param: bf16 params 2 + bf16 grads 2 + fp32 master/Adam m/v 12 (e.g. 70B = 1.12 TB); TP*PP divide parameters evenly (embedding placement ignored, labeled); ZeRO-1 shards the optimizer over DP, ZeRO-2 also grads, ZeRO-3 also params. Activations per layer follow Korthikanti et al. 2022 Table 2: sbh(10 + 24/t + 5as/(ht)) without recompute, sbh(34/t + 5as/(ht)) with sequence parallel, selective recompute sbh(10 + 24/t) or 34sbh/t with SP, full recompute 2sbh; times ceil(L/PP) layers and, for 1F1B, min(m, PP) micro-batches in flight on the first stage (so PP alone does not shrink activation memory). Also shows bytes sent per GPU per optimizer step for DP (DDP all-reduce 2*2Psi'*(d-1)/d; ZeRO-2/3 reduce-scatter every micro-batch; ZeRO-3 is 1.5x DDP at m = 1), TP (4 all-reduces of s*b*h per layer per micro-batch, 6 with full recompute) and PP (activation + gradient per micro-batch). A collapsible 'How this is computed' lists every formula and assumption. Controls: model preset (Llama-3 8B: 32 layers, h 4096, 32 heads; 70B: 80, 8192, 64; 405B: 126, 16384, 128) or custom (params, layers, hidden, heads), sequence length, micro-batch b, micro-batches per step m, DP, TP (1-16), PP, ZeRO stage, recompute (none/selective/full), sequence parallel, GPU. Good tasks: 'make Llama-3 70B fit on 80 GB H100s with the fewest GPUs', 'which ZeRO stage first makes the optimizer states small?', 'why does selective recompute + sequence parallel matter at 32K context?', 'what does ZeRO-3 cost in communication vs ZeRO-1?'. Reported state: model, params, layers, hidden, heads, seq_len, micro_batch, micro_batches_per_step, dp, tp, pp, gpus_total, global_batch_tokens, zero_stage, recompute, sequence_parallel, gpu, gpu_memory_gib, params_gib, grads_gib, optimizer_gib, activations_gib, total_gib, fits, layers_per_stage, inflight_microbatches_first_stage, comm_dp_gb_per_step, comm_tp_gb_per_step, comm_pp_gb_per_step, warnings, verdict.",
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "model": { "type": "string", "enum": ["llama3_8b", "llama3_70b", "llama3_405b", "custom"], "default": "llama3_70b", "description": "Model preset; 'custom' uses params_b, layers, hidden, heads." },
+      "params_b": { "type": "number", "minimum": 0.1, "maximum": 2000, "default": 13, "description": "Custom model: total parameters in billions." },
+      "layers": { "type": "integer", "minimum": 1, "maximum": 160, "default": 40, "description": "Custom model: transformer layers L." },
+      "hidden": { "type": "integer", "minimum": 512, "maximum": 32768, "default": 5120, "description": "Custom model: hidden size h." },
+      "heads": { "type": "integer", "minimum": 1, "maximum": 256, "default": 40, "description": "Custom model: attention heads a." },
+      "seq_len": { "type": "integer", "minimum": 512, "maximum": 131072, "default": 4096, "description": "Sequence length s (power of 2 on the slider)." },
+      "micro_batch": { "type": "integer", "minimum": 1, "maximum": 64, "default": 1, "description": "Micro-batch size b (sequences)." },
+      "micro_batches": { "type": "integer", "minimum": 1, "maximum": 64, "default": 8, "description": "Micro-batches per optimizer step m (gradient accumulation / pipeline micro-batches)." },
+      "dp": { "type": "integer", "minimum": 1, "maximum": 2048, "default": 8, "description": "Data-parallel degree." },
+      "tp": { "type": "integer", "enum": [1, 2, 4, 8, 16], "default": 8, "description": "Tensor-parallel degree." },
+      "pp": { "type": "integer", "minimum": 1, "maximum": 32, "default": 1, "description": "Pipeline-parallel stages (1F1B schedule)." },
+      "zero_stage": { "type": "integer", "enum": [0, 1, 2, 3], "default": 1, "description": "ZeRO stage over the DP group (0 = plain DDP, 3 = FSDP full shard)." },
+      "recompute": { "type": "string", "enum": ["none", "selective", "full"], "default": "selective", "description": "Activation recomputation mode (selective = recompute attention core, as in Korthikanti et al.)." },
+      "sequence_parallel": { "type": "boolean", "default": true, "description": "Megatron sequence parallelism (only has an effect with tp > 1)." },
+      "gpu": { "type": "string", "enum": ["A100_SXM_80GB", "H100_SXM", "H200_SXM", "B200", "MI300X", "RTX_4090", "RX_7900_XTX"], "default": "H100_SXM", "description": "GPU whose memory is the capacity line." }
+    }
+  },
+  "example": { "model": "llama3_70b", "seq_len": 4096, "micro_batch": 1, "micro_batches": 8, "dp": 8, "tp": 8, "pp": 1, "zero_stage": 0, "recompute": "none", "sequence_parallel": false, "gpu": "H100_SXM" }
+}

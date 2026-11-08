@@ -1,0 +1,27 @@
+{
+  "name": "kv_cache",
+  "description": "KV cache in LLM serving, in two parts. (1) Sizing: bytes per token = 2 (K and V) x layers x KV heads x head_dim x dtype bytes; for DeepSeek-V3's Multi-head Latent Attention (MLA) it is layers x (512 latent + 64 RoPE key) x dtype bytes. The learner picks a model preset (Llama-3.1 8B/70B/405B, Qwen3 32B, Qwen3 235B-A22B, Mixtral 8x7B, DeepSeek-V3), the attention variant (MHA / GQA / MQA, plus MLA for DeepSeek-V3; the model's real one is marked with a check, others are hypothetical), KV and weight dtypes, GPU, tensor-parallel degree, sequence length and batch. It shows KV per token / sequence / batch, a bar comparison of the variants, and one GPU's memory split into weights and KV with the usable limit, plus how many full-length sequences fit after weights. TP splits KV heads across GPUs but replicates them when TP > KV heads; the MLA latent is replicated on every TP rank. GPU memory is the vendor capacity in GiB (80 GB H100 = 80 GiB = 85.9e9 B) times mem_util (default 0.9, like vLLM). Activations and CUDA graphs are ignored. (2) Allocation: seeded random requests (current lengths skewed short, all starting with a shared system prompt) drawn as physical memory maps at the same scale: contiguous max-length preallocation (reserved but empty space faint) vs PagedAttention blocks handed out on demand from a pool (blocks of different requests interleave). Block size 8-128 tokens shows internal fragmentation; 'Share blocks' stores the system prompt's full blocks once (ref-counted; its partial last block is copied on write). Stats: tokens stored, contiguous waste %, paged internal fragmentation %, and how many such requests fit in the chosen GPU's free memory under each scheme. Good tasks: 'how much KV memory does GQA save over MHA for Llama-3.1 70B?', 'find the largest batch of 8K-token sequences that fits on 4x H100', 'why does DeepSeek-V3 need so little KV?', 'pick a block size and explain the fragmentation trade-off', 'how much does sharing a 1K-token system prompt save?'. Use view to show only one part. Reported state: model, attention, kv_heads, dtypes, gpu, tp, seq_len_tokens, batch, kv_bytes_per_token, kv_bytes_per_sequence, kv_bytes_for_batch, weights_gb_per_gpu, free_for_kv_gb_per_gpu, max_concurrent_sequences, batch_fits, requests, block_size_tokens, used_tokens, contiguous_waste_fraction, paged_internal_fragmentation_fraction, shared_prefix_blocks, requests_that_fit_contiguous, requests_that_fit_paged, verdict.",
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "view": { "type": "string", "enum": ["both", "sizing", "allocation"], "default": "both", "description": "Which part to show." },
+      "model": { "type": "string", "enum": ["llama31_8b", "llama31_70b", "llama31_405b", "qwen3_32b", "qwen3_235b_a22b", "mixtral_8x7b", "deepseek_v3"], "default": "llama31_70b", "description": "Model preset." },
+      "attention": { "type": "string", "enum": ["MHA", "GQA", "MQA", "MLA"], "default": "GQA", "description": "Initial attention variant. MLA only exists for deepseek_v3; an unavailable choice falls back to the model's native variant." },
+      "kv_dtype": { "type": "string", "enum": ["bf16", "fp8"], "default": "bf16", "description": "KV cache dtype." },
+      "weight_dtype": { "type": "string", "enum": ["bf16", "fp8", "int4"], "default": "bf16", "description": "Weights dtype (determines memory left for KV)." },
+      "gpu": { "type": "string", "enum": ["A100_SXM_80GB", "H100_SXM", "H200_SXM", "B200", "MI300X", "RTX_4090", "RX_7900_XTX"], "default": "H100_SXM", "description": "GPU." },
+      "tp": { "type": "integer", "enum": [1, 2, 4, 8], "default": 4, "description": "Tensor-parallel degree (GPUs sharing weights and KV)." },
+      "seq_len": { "type": "integer", "minimum": 512, "maximum": 131072, "default": 8192, "description": "Tokens per sequence (rounded to a power of two)." },
+      "batch": { "type": "integer", "minimum": 1, "maximum": 512, "default": 32, "description": "Concurrent sequences (rounded to a power of two)." },
+      "mem_util": { "type": "number", "minimum": 0.5, "maximum": 1, "default": 0.9, "description": "Fraction of GPU memory usable for weights + KV (not a learner control)." },
+      "requests": { "type": "integer", "minimum": 2, "maximum": 32, "default": 12, "description": "Number of requests in the allocation view." },
+      "seed": { "type": "integer", "minimum": 0, "default": 1, "description": "Random seed for request lengths." },
+      "max_len": { "type": "integer", "enum": [512, 1024, 1536, 2048, 2560, 3072, 3584, 4096], "default": 2048, "description": "Max sequence length that contiguous allocation reserves per request." },
+      "block_size": { "type": "integer", "enum": [8, 16, 32, 64, 128], "default": 16, "description": "PagedAttention block size in tokens." },
+      "prefix_tokens": { "type": "integer", "minimum": 0, "maximum": 1024, "default": 256, "description": "Length of the system prompt every request starts with." },
+      "share_prefix": { "type": "boolean", "default": false, "description": "Start with prefix blocks shared (copy-on-write) instead of copied per request." }
+    }
+  },
+  "example": { "model": "llama31_70b", "gpu": "H100_SXM", "tp": 4, "seq_len": 8192, "batch": 32, "requests": 12, "block_size": 16, "prefix_tokens": 256 }
+}

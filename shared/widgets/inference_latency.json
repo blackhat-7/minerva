@@ -1,0 +1,23 @@
+{
+  "name": "inference_latency",
+  "description": "LLM serving latency and throughput on n tensor-parallel GPUs, prefill vs decode, from a roofline model: every forward pass takes max(compute time, memory time) + a fixed per-pass overhead. Compute = (2 x N_active FLOPs per token + attention 2 x layers x heads x (d_k + d_v) FLOPs per cached token, causal in prefill; for DeepSeek-V3's MLA, prefill uses the MHA form (d_k 192, d_v 128) and decode the weight-absorbed latent form (d_k 576, d_v 512), and the latent KV cache is replicated on every TP GPU) / (n x peak x MFU). Memory = weights read once per pass (MoE: only the experts at least one token routed to, assuming uniform routing, so batch 1 reads ~active params and large batches read all experts) + KV cache read (decode) or written (prefill), / (n x HBM bandwidth x efficiency). Static batch: B prompts prefilled together (TTFT), then O-1 decode steps at growing context (TPOT is their mean). FP8 weights use FP8 tensor peak where the GPU has it; int4 is weight-only with BF16 math. TP communication, continuous batching, chunked prefill and speculative decoding are ignored. The learner picks model (Llama-3.1 8B/70B/405B, Qwen3 32B, Qwen3 235B-A22B MoE, Mixtral 8x7B MoE, DeepSeek-V3 MoE with MLA), GPU, TP (1/2/4/8), weight dtype (bf16/fp8/int4), KV dtype, prompt length, output length, batch (1-1024), MFU, bandwidth efficiency and overhead. Shows TTFT, TPOT, tokens/s per request, total throughput, decode bound, the max batch whose KV fits after weights (GPU memory in GiB x 0.9), a bar splitting one decode step into compute vs weight-read vs KV-read time, and log-x charts of throughput and TPOT vs batch with the knee where decode turns compute-bound and the KV-memory limit marked (tap/drag the chart to set batch). Good tasks: 'find the batch where throughput stops scaling', 'why does doubling batch barely change TPOT at small batch?', 'how does int4 change TPOT at batch 1 vs 256?', 'why does a 32K prompt keep decode memory-bound at any batch?', 'compare Mixtral's batch-1 TPOT to a dense 47B model'. Reported state: model, gpu, tp, weight_dtype, kv_dtype, compute_dtype, prompt_tokens, output_tokens, batch, mfu, bw_efficiency, overhead_ms_per_pass, ttft_ms, tpot_ms, per_request_tokens_per_s, throughput_tokens_per_s, throughput_tokens_per_s_per_gpu, decode_bound_at_mean_context, knee_batch_compute_bound (null if never), max_batch_kv_fits, batch_fits, verdict.",
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "model": { "type": "string", "enum": ["llama31_8b", "llama31_70b", "llama31_405b", "qwen3_32b", "qwen3_235b_a22b", "mixtral_8x7b", "deepseek_v3"], "default": "llama31_70b", "description": "Model preset." },
+      "gpu": { "type": "string", "enum": ["A100_SXM_80GB", "H100_SXM", "H200_SXM", "B200", "MI300X", "RTX_4090", "RX_7900_XTX"], "default": "H100_SXM", "description": "GPU." },
+      "tp": { "type": "integer", "enum": [1, 2, 4, 8], "default": 4, "description": "Tensor-parallel degree n." },
+      "weight_dtype": { "type": "string", "enum": ["bf16", "fp8", "int4"], "default": "bf16", "description": "Weight dtype." },
+      "kv_dtype": { "type": "string", "enum": ["bf16", "fp8"], "default": "bf16", "description": "KV cache dtype." },
+      "prompt_len": { "type": "integer", "minimum": 16, "maximum": 32768, "default": 1024, "description": "Prompt tokens per request." },
+      "output_len": { "type": "integer", "minimum": 2, "maximum": 4096, "default": 256, "description": "Output tokens per request." },
+      "batch": { "type": "integer", "minimum": 1, "maximum": 1024, "default": 16, "description": "Concurrent requests." },
+      "mfu": { "type": "number", "minimum": 0.1, "maximum": 1, "default": 0.5, "description": "Achieved fraction of peak tensor FLOP/s (prefill and decode)." },
+      "bw_efficiency": { "type": "number", "minimum": 0.3, "maximum": 1, "default": 0.8, "description": "Achieved fraction of peak HBM bandwidth." },
+      "overhead_ms": { "type": "number", "minimum": 0, "maximum": 10, "default": 0, "description": "Fixed time per forward pass (kernel launch, scheduling), ms." },
+      "mem_util": { "type": "number", "minimum": 0.5, "maximum": 1, "default": 0.9, "description": "Usable fraction of GPU memory for weights + KV (not a learner control)." }
+    }
+  },
+  "example": { "model": "llama31_70b", "gpu": "H100_SXM", "tp": 4, "prompt_len": 1024, "output_len": 256, "batch": 16 }
+}

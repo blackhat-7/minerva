@@ -1,0 +1,50 @@
+# Copy to config.toml. Every model endpoint is optional; configure what you have.
+
+# Providers are LLM endpoints.
+# kind = "openai": any OpenAI-compatible server (llama.cpp, Ollama, vLLM, LM Studio, Strata, OpenRouter).
+# kind = "claude_code": your Claude subscription, through the official `claude` CLI in headless mode
+#   (`claude -p`). Install Claude Code on the machine running the backend and log in once with `claude`.
+#   Minerva never reads your credentials. Personal use only: don't let other people use your instance.
+[[providers]]
+name = "local"
+kind = "openai"
+base_url = "http://127.0.0.1:6868/v1"
+model = "local"
+html = false            # allow freeform HTML simulations; keep for strong models only
+# api_key_env = "LOCAL_API_KEY"
+# structured = false    # set if the server rejects response_format json_schema, or only validates it
+#                       # afterwards (Strata): then Minerva checks the JSON itself and asks the model to fix it
+# Thinking: the server keeps it out of the reply. Keep it brief for chat latency. Don't turn it off for models that
+# then write their reasoning into the reply (seen: Qwen3.8 Flash-Next on Strata), or the tutor speaks it.
+# extra_body = { reasoning_effort = "low" }
+
+[[providers]]
+name = "claude"
+kind = "claude_code"
+model = "claude-sonnet-5-5"   # or claude-opus-5-5 / claude-haiku-5-5
+html = true
+
+# Which providers each job uses, tried in order until one is reachable.
+[roles]
+lesson = ["claude", "local"]   # lesson generation: quality matters
+tutor = ["local", "claude"]    # chat, grading, drills: latency matters
+
+# Who is learning. Lessons pitch depth and pick examples from this.
+[learner]
+about = """
+Backend engineer (Python, Go), comfortable with Linux and GPUs. Runs local LLMs on one 24 GB GPU with
+llama.cpp. Learning ML infrastructure: training and inference at scale.
+"""
+
+# Voice: any OpenAI-compatible speech server. Remove a section to fall back to the browser's voice / hide the mic.
+# README "Voice" sets up speaches (Kokoro TTS + Parakeet STT on CPU, so the GPU stays free for the LLM).
+[tts]
+base_url = "http://127.0.0.1:8000/v1"
+model = "speaches-ai/Kokoro-82M-v1.0-ONNX"
+voice = "af_heart"
+
+[stt]
+base_url = "http://127.0.0.1:8000/v1"
+# Parakeet: ~0.3 s per question on CPU; misheard jargon is snapped to the lesson glossary afterwards.
+# "deepdml/faster-whisper-large-v3-turbo-ct2" takes the glossary as a hint instead, but needs ~4 s per question on CPU.
+model = "istupakov/parakeet-tdt-0.6b-v2-onnx"

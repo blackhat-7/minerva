@@ -1,0 +1,27 @@
+{
+  "name": "collective",
+  "description": "Animated, step-by-step simulation of a collective on N ranks. A matrix shows each rank's buffer (rows = ranks, columns = the N chunks of the message, colored by chunk); for reductions each cell shows how many ranks' data are summed into it (Σ = complete) and tapping a cell lists exactly which ranks. Ops and algorithms: all_reduce (ring = reduce-scatter then all-gather, 2(N-1) steps; tree = binomial reduce to rank 0 then binomial broadcast on whole messages, 2*ceil(log2 N) steps, not pipelined like NCCL's double binary tree), reduce_scatter (ring, N-1 steps), all_gather (ring, N-1 steps), broadcast from rank 0 (ring = pipelined chain with N chunks, 2N-2 steps; tree = binomial, ceil(log2 N) steps), all_to_all (pairwise exchange: disjoint pairs swap blocks, N-1 rounds for even N, N for odd N). Play/pause/step/reset animates chunk transfers with a step counter and phase. Stats come from the simulated schedule under the alpha-beta model (each step costs alpha + busiest rank's bytes / beta): steps, bytes sent per rank (ring all-reduce 2(N-1)/N*S, reduce-scatter/all-gather/all-to-all (N-1)/N*S), estimated time, algorithm bandwidth S/time and NCCL bus bandwidth (algbw x 2(N-1)/N for all-reduce, x (N-1)/N for reduce-scatter/all-gather/all-to-all, x 1 for broadcast). Shows 'all-reduce = reduce-scatter + all-gather' with times, and the other algorithm's time for comparison. S = full buffer per rank. Controls: op, algorithm, N (2-16), message size (1 KB-10 GB), link bandwidth (1-2000 GB/s, one direction), per-step latency (0.1-100 us). Good tasks: 'why does ring all-reduce bus bandwidth approach the link bandwidth for large messages?', 'find the message size where tree beats ring at N=16', 'show that reduce-scatter + all-gather equals all-reduce', 'how many bytes does each rank send in an all-to-all?'. Reported state: op, algorithm, ranks, message_bytes, link_gb_per_s, latency_us, steps, bytes_sent_per_rank_max, time_us, latency_share_of_time, algbw_gb_per_s, busbw_gb_per_s, <other algorithm>_time_us (when there is one), animation_steps_completed, animation_phase, verdict.",
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "op": {
+        "type": "string",
+        "enum": ["all_reduce", "reduce_scatter", "all_gather", "broadcast", "all_to_all"],
+        "default": "all_reduce",
+        "description": "Initial collective."
+      },
+      "algorithm": {
+        "type": "string",
+        "enum": ["ring", "tree"],
+        "default": "ring",
+        "description": "tree applies to all_reduce and broadcast only; other ops use ring, and all_to_all always uses pairwise exchange."
+      },
+      "ranks": { "type": "integer", "minimum": 2, "maximum": 16, "default": 4, "description": "Number of ranks N (GPUs)." },
+      "message_mb": { "type": "number", "minimum": 0.001, "maximum": 10000, "default": 64, "description": "Message size S in MB (1e6 bytes): the full buffer per rank." },
+      "link_gbps": { "type": "number", "minimum": 1, "maximum": 2000, "default": 450, "description": "Per-rank link bandwidth beta in GB/s, one direction (H100 NVLink about 450, 400G InfiniBand about 50)." },
+      "latency_us": { "type": "number", "minimum": 0.1, "maximum": 100, "default": 5, "description": "Per-step latency alpha in microseconds." }
+    }
+  },
+  "example": { "op": "all_reduce", "algorithm": "ring", "ranks": 4, "message_mb": 64, "link_gbps": 450, "latency_us": 5 }
+}

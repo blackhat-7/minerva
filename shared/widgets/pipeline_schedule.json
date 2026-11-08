@@ -1,0 +1,16 @@
+{
+  "name": "pipeline_schedule",
+  "description": "Gantt timeline of pipeline-parallel training: rows are GPUs (pipeline stages), x is time, blocks are forward (blue) and backward (pink) passes of numbered microbatches; idle time (the pipeline bubble) is hatched. The schedule is simulated from real dependencies (F of stage s waits for F of stage s-1, B waits for B of the next stage) for GPipe, 1F1B (PipeDream-Flush) and Megatron interleaved 1F1B with v model chunks per GPU. Communication time is ignored. Time unit: one microbatch forward through one GPU's layers. The learner can switch schedule, set stages p (2-16), microbatches m (1-64; interleaved forces m to a multiple of p), virtual stages v (2-4), and the backward/forward time ratio, play/scrub a time cursor (a bar per GPU shows how many microbatches' activations are stored at that moment), and tap a block to trace one microbatch. Stats: step time vs ideal m*(1+r), bubble share of step time (GPipe and 1F1B: (p-1)/(m+p-1)), bubble/ideal measured vs the Narayanan et al. 2021 formula ((p-1)/m, interleaved (p-1)/(v*m)), and peak stored activations (GPipe m, 1F1B p on the first GPU, interleaved slightly more than p). Good tasks: 'find the smallest m that keeps the bubble under 10% at p=8', 'compare peak activation memory of GPipe and 1F1B at the same bubble', 'how much does v=2 shrink the bubble, and what does it cost in activations?'. Reported state: schedule, stages_p, microbatches_m, virtual_stages_v, bwd_fwd_ratio, step_time_units, ideal_time_units, bubble_fraction_of_step, bubble_over_ideal_simulated, bubble_over_ideal_formula, peak_stored_activations_microbatches_per_gpu, verdict.",
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "schedule": { "type": "string", "enum": ["gpipe", "1f1b", "interleaved"], "default": "1f1b", "description": "Initial schedule." },
+      "stages": { "type": "integer", "minimum": 2, "maximum": 16, "default": 4, "description": "Pipeline stages p (one per GPU)." },
+      "microbatches": { "type": "integer", "minimum": 1, "maximum": 64, "default": 8, "description": "Microbatches m per optimizer step. Rounded to a multiple of p for the interleaved schedule." },
+      "virtual_stages": { "type": "integer", "minimum": 2, "maximum": 4, "default": 2, "description": "Model chunks per GPU v (interleaved schedule only)." },
+      "bwd_fwd_ratio": { "type": "number", "minimum": 1, "maximum": 3, "default": 2, "description": "Backward time / forward time per microbatch (about 2 without recomputation, about 3 with full activation recomputation)." }
+    }
+  },
+  "example": { "schedule": "gpipe", "stages": 4, "microbatches": 8, "bwd_fwd_ratio": 2 }
+}

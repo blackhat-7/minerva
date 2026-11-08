@@ -1,0 +1,228 @@
+@import 'tailwindcss';
+@import 'katex/dist/katex.min.css';
+
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/* Design tokens. Use these (bg-surface, text-muted, border-line, text-accent, ...) instead of raw colors.
+   Widgets use the chart-* series colors for data. Accent is for progress, focus and highlights; the
+   primary action is light on dark. */
+@theme static {
+  --color-bg: #09090b;
+  --color-surface: #111114;
+  --color-raised: #1a1a1f;
+  --color-line: #24242b;
+  --color-fg: #ececf1;
+  --color-muted: #8c8c99;
+  --color-accent: #8ea0ff;
+  --color-accent-fg: #0a0b14;
+  --color-good: #5fd39d;
+  --color-warn: #f2b65e;
+  --color-bad: #f27e7e;
+  --color-chart-1: #8ea0ff;
+  --color-chart-2: #f08bbd;
+  --color-chart-3: #5fd3a8;
+  --color-chart-4: #f2c35e;
+  --color-chart-5: #b49cff;
+  --color-chart-6: #5ccfe6;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --animate-enter: enter 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+:root {
+  color-scheme: dark; /* also lets generated simulations' iframes stay transparent */
+}
+
+html,
+body,
+#root {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv11', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  /* Range sliders: a hairline track and a light thumb. */
+  input[type='range'] {
+    appearance: none;
+    background: transparent;
+  }
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-line);
+  }
+  input[type='range']::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-line);
+  }
+  input[type='range']::-moz-range-progress {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-accent);
+  }
+  input[type='range']::-webkit-slider-thumb {
+    appearance: none;
+    margin-top: -6px;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--color-fg);
+    box-shadow: 0 1px 6px rgb(0 0 0 / 0.5);
+  }
+  input[type='range']::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--color-fg);
+    box-shadow: 0 1px 6px rgb(0 0 0 / 0.5);
+  }
+
+  select {
+    appearance: none;
+  }
+
+  /* The narration seek bar on the dock's edge: a hairline with a small thumb. */
+  input[type='range'].scrubber::-webkit-slider-runnable-track {
+    height: 3px;
+    background: linear-gradient(to right, var(--color-accent) var(--played), var(--color-line) var(--played));
+  }
+  input[type='range'].scrubber::-moz-range-track {
+    height: 3px;
+    background: color-mix(in srgb, var(--color-fg) 14%, transparent);
+  }
+  input[type='range'].scrubber::-moz-range-progress {
+    height: 3px;
+  }
+  input[type='range'].scrubber::-webkit-slider-thumb {
+    margin-top: -4.5px;
+    width: 12px;
+    height: 12px;
+  }
+  input[type='range'].scrubber::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+/* The sentence being read aloud in Read mode (Read.tsx useReadAlong). */
+::highlight(narration) {
+  background-color: color-mix(in srgb, var(--color-accent) 26%, transparent);
+  color: var(--color-fg);
+}
+
+::highlight(narration-hover) {
+  background-color: color-mix(in srgb, var(--color-fg) 7%, transparent);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Rendered markdown (prompts, explanations, tutor replies). */
+@layer components {
+  .md {
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+  .md > * + * {
+    margin-top: 0.7em;
+  }
+  .md ul {
+    list-style: disc;
+    padding-left: 1.25em;
+  }
+  .md ol {
+    list-style: decimal;
+    padding-left: 1.25em;
+  }
+  .md li + li {
+    margin-top: 0.25em;
+  }
+  .md h1,
+  .md h2,
+  .md h3,
+  .md h4 {
+    font-weight: 600;
+  }
+  .md strong {
+    font-weight: 600;
+  }
+  .md a {
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .md code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--color-raised);
+    border-radius: 6px;
+    padding: 0.1em 0.35em;
+  }
+  .md pre {
+    background: var(--color-raised);
+    border-radius: 12px;
+    padding: 0.75em 1em;
+    overflow-x: auto;
+  }
+  .md pre code {
+    background: none;
+    padding: 0;
+  }
+  .md table {
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+  }
+  .md th,
+  .md td {
+    border: 1px solid var(--color-line);
+    padding: 0.3em 0.6em;
+  }
+  .md blockquote {
+    border-left: 2px solid var(--color-line);
+    padding-left: 0.8em;
+    color: var(--color-muted);
+  }
+  .md .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.2em 0;
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "training_cost",
+  "description": "Back-of-envelope LLM pre-training compute and cost. FLOPs = 6 x N x D (forward 2 + backward 4 FLOPs per parameter per token; attention FLOPs and activation recomputation ignored; MoE uses active parameters). Wall-clock time = FLOPs / (GPUs x peak dense tensor FLOP/s for the precision x MFU); GPU-hours = time x GPUs; cost = GPU-hours x $/GPU-hour. Chinchilla (Hoffmann et al. 2022) compute-optimal is about 20 tokens per parameter (fit on dense models). The learner sets total params (0.1B-2T, log), dense vs MoE with active params, training tokens (1B-100T, log), GPU type, GPU count (1-100,000, log), precision (bf16/fp8; fp8 falls back to the bf16 rate on GPUs without FP8), MFU (10-70%) and $/GPU-hour, and can tap the chart to set N and D. Buttons: set D = 20N, and load the Llama 3.1 405B run (15.6T tokens, 16,384 H100s, 40% MFU, about 3.8e25 FLOPs; Meta reports 30.84M H100-hours vs about 27M from the formula). The log-log chart shows params vs tokens with the Chinchilla line, iso-FLOP lines (1e21-1e27) and real runs: GPT-3, Chinchilla, Llama 3.1 8B and 405B, DeepSeek-V3 (37B active). Good tasks: 'how long would a Chinchilla-optimal 70B take on 1,024 H100s?', 'estimate the cost of Llama 3.1 405B at $2/GPU-hour', 'why is Llama 3 8B far above the Chinchilla line?', 'how much does FP8 save?', 'show that GPU count changes days but not GPU-hours'. Reported state: params_total, params_active, moe, tokens, training_flops, tokens_per_param, chinchilla_optimal_tokens, gpu, gpus, dtype, peak_tflops_per_gpu, mfu, dollars_per_gpu_hour, wall_clock_days, gpu_hours, cost_usd, verdict.",
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "params_b": { "type": "number", "minimum": 0.1, "maximum": 2000, "default": 70, "description": "Total parameters, billions." },
+      "active_params_b": { "type": ["number", "null"], "minimum": 0.1, "maximum": 2000, "default": null, "description": "Active parameters per token for an MoE, billions; null = dense." },
+      "tokens_t": { "type": "number", "minimum": 0.001, "maximum": 100, "default": 1.4, "description": "Training tokens, trillions." },
+      "gpu": { "type": "string", "enum": ["A100_SXM_80GB", "H100_SXM", "H200_SXM", "B200", "MI300X", "RTX_4090", "RX_7900_XTX"], "default": "H100_SXM", "description": "GPU type." },
+      "gpus": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 1024, "description": "Number of GPUs." },
+      "mfu": { "type": "number", "minimum": 0.1, "maximum": 0.7, "default": 0.4, "description": "Model FLOPs utilization." },
+      "dollars_per_gpu_hour": { "type": "number", "minimum": 0.5, "maximum": 10, "default": 2.5, "description": "Price per GPU-hour, USD." },
+      "dtype": { "type": "string", "enum": ["bf16", "fp8"], "default": "bf16", "description": "Training matmul precision." }
+    }
+  },
+  "example": { "params_b": 70, "tokens_t": 1.4, "gpu": "H100_SXM", "gpus": 1024, "mfu": 0.4, "dollars_per_gpu_hour": 2.5 }
+}

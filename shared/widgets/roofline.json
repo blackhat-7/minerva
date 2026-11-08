@@ -1,0 +1,32 @@
+{
+  "name": "roofline",
+  "description": "Log-log roofline for one GPU and dtype: attainable TFLOP/s vs arithmetic intensity (FLOP/byte). Draws the memory roof (HBM bandwidth x intensity), the compute roof (dense peak tensor rate) and the ridge point (peak / bandwidth, e.g. H100 bf16 = 295 FLOP/B). The operating point is a GEMM [M x K] . [K x N] with FLOPs = 2MNK and bytes = dtype_bytes x (MK + KN + MN), each matrix moved through HBM once; op time = max(FLOPs / peak, bytes / bandwidth). LLM framing: M = tokens in the batch (batch-1 decode is a GEMV with intensity about 1 FLOP/B in bf16), K = d_model, N = output dim of the projection. The learner can pick the GPU and dtype (fp32 uses the TF32 tensor rate; fp8 on GPUs without FP8 assumes FP8 storage with BF16 math; int8 uses INT8 TOPS), move M (1-16384, log), K and N (64-65536), use presets 'decode (batch 1)', 'decode (batch 64)', 'prefill (2048 tokens)', and overlay other GPUs' roofs to compare. GPUs: A100_SXM_80GB, H100_SXM, H200_SXM, B200, MI300X, RTX_4090, RX_7900_XTX. Good tasks: 'raise M until decode becomes compute-bound (find the batch at the ridge)', 'why does H200 speed up decode but not prefill vs H100?', 'how does fp8 move the ridge?', 'why is small-K/N work never compute-bound?'. Reported state: gpu, dtype, gemm_m_tokens, gemm_k, gemm_n, flops, bytes_moved, intensity_flop_per_byte, ridge_flop_per_byte, peak_tflops, hbm_bandwidth_tb_per_s, attainable_tflops, fraction_of_peak, op_time_us, bound (memory|compute), m_to_reach_ridge (null if unreachable at this K, N), compare (per compared GPU: ridge, attainable, op time), verdict.",
+  "props": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "gpu": {
+        "type": "string",
+        "enum": ["A100_SXM_80GB", "H100_SXM", "H200_SXM", "B200", "MI300X", "RTX_4090", "RX_7900_XTX"],
+        "default": "H100_SXM",
+        "description": "Initial GPU."
+      },
+      "dtype": {
+        "type": "string",
+        "enum": ["fp32", "bf16", "fp16", "fp8", "int8"],
+        "default": "bf16",
+        "description": "Data type of both operands and the output; sets bytes per element and the peak rate."
+      },
+      "m": { "type": "integer", "minimum": 1, "maximum": 16384, "default": 1, "description": "M: rows of the activation matrix = tokens in the batch (1 = batch-1 decode)." },
+      "k": { "type": "integer", "minimum": 64, "maximum": 65536, "default": 8192, "description": "K: inner dimension, usually d_model." },
+      "n": { "type": "integer", "minimum": 64, "maximum": 65536, "default": 8192, "description": "N: output dimension of the weight matrix (e.g. d_model, 3*d_model for QKV, FFN width)." },
+      "compare_gpus": {
+        "type": "array",
+        "items": { "type": "string", "enum": ["A100_SXM_80GB", "H100_SXM", "H200_SXM", "B200", "MI300X", "RTX_4090", "RX_7900_XTX"] },
+        "default": [],
+        "description": "Other GPUs whose roofs are overlaid (dashed) for comparison, with the same GEMM's point on each."
+      }
+    }
+  },
+  "example": { "gpu": "H100_SXM", "dtype": "bf16", "m": 1, "k": 8192, "n": 8192, "compare_gpus": ["H200_SXM"] }
+}

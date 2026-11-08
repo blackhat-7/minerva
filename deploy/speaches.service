@@ -1,0 +1,13 @@
+[Unit]
+Description=speaches — local speech-to-text and text-to-speech (OpenAI-compatible) for Minerva
+After=network.target
+
+[Service]
+WorkingDirectory=%h/.local/share/voice/speaches
+EnvironmentFile=%h/.local/share/voice/speaches.env
+ExecStart=%h/.local/share/voice/speaches/.venv/bin/uvicorn --factory speaches.main:create_app
+Restart=on-failure
+Nice=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+# HTTPS for Minerva on a tailnet. MINERVA_HOST (e.g. minerva.example.com, set in the env file) is a DNS-only
+# record pointing at the machine's tailnet IP, so only tailnet devices can reach it; the cert comes from a
+# Cloudflare DNS challenge.
+# Port 8443 needs no root.
+{
+	https_port 8443
+	auto_https disable_redirects # no plain-HTTP listener needed
+}
+
+{$MINERVA_HOST}:8443 {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	reverse_proxy 127.0.0.1:8765 {
+		flush_interval -1 # stream tutor replies as they arrive
+	}
+}
