@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import date
 
 import pytest
 from conftest import ROOFLINE, lesson_json
@@ -167,7 +168,7 @@ def test_claude_json(claude_config, fake_claude, tmp_path):
     [call] = fake_claude()
     args = call["args"]
     assert call["stdin"] == "a long prompt" and call["cwd"] == str(tmp_path / "cwd") and call["no_memory"] == "1"
-    assert args[args.index("--system-prompt") + 1] == "be brief"
+    assert args[args.index("--system-prompt") + 1] == f"be brief\n\nToday's date is {date.today().isoformat()}."
     assert args[args.index("--model") + 1] == "claude-haiku-5-5"
     assert args[args.index("--tools") + 1] == args[args.index("--allowedTools") + 1] == "WebSearch,WebFetch"
     assert args[args.index("--setting-sources") + 1] == "project"

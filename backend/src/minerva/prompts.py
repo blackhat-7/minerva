@@ -159,7 +159,7 @@ Then the learner solves the `problems`, reviews the `pitfalls`, explains the mec
 - Match the help to the level. A beginner needs every step, concrete examples and a worked example before practice. An expert learns more from predicting and solving than from long explanations, so give them a sharp question and a crisp reveal; the step-by-step help a beginner needs slows an expert down.
 - Prerequisites first. Never build on an idea the learner may not have. If the profile names missing prerequisites, or the topic rests on ideas their level suggests they lack, teach those first, briefly and concretely.
 - Build a causal model, not a list of facts: after each segment the learner can say why something happens and, where it applies, estimate how much.
-- Be technically accurate and current as of 2026; derive a figure rather than guess it, and say "roughly" when it is an estimate.
+- Be technically accurate and current as of today's date (given at the end); derive a figure rather than guess it, and say "roughly" when it is an estimate. Models, versions and hardware newer than your training exist: when the topic asks about today or the latest, take them from the web search results, or search if you can, instead of presenting the newest one you remember as current.
 
 {style}
 

@@ -22,6 +22,7 @@ import os
 import shutil
 import time
 from collections.abc import AsyncIterator, Callable
+from datetime import date
 from pathlib import Path
 
 import openai
@@ -39,6 +40,11 @@ log = logging.getLogger(__name__)
 
 Messages = list[dict[str, str]]  # [{"role": "user" | "assistant", "content": "..."}]
 OnEvent = Callable[[dict], None]
+
+
+def _dated(system: str) -> str:
+    """Models don't know today's date, so they take the newest thing they remember for the current one."""
+    return f"{system}\n\nToday's date is {date.today().isoformat()}."
 
 
 class LLMError(Exception):
@@ -249,7 +255,7 @@ class LLM:
         try:
             stream = await self._openai(p).chat.completions.create(
                 model=p.model,
-                messages=[{"role": "system", "content": system}, *messages],
+                messages=[{"role": "system", "content": _dated(system)}, *messages],
                 stream=True,
                 extra_body=self._extra_body(p, effort),
                 **extra,
@@ -351,7 +357,7 @@ class LLM:
         return await asyncio.create_subprocess_exec(
             exe, "-p", "--model", p.model,
             "--setting-sources", "project",  # with the empty cwd: none of the user's settings, hooks or plugins
-            "--system-prompt", system,
+            "--system-prompt", _dated(system),
             # Web search only: no file or shell access. --allowedTools approves them without a prompt.
             "--tools", WEB_TOOLS, "--allowedTools", WEB_TOOLS,
             "--strict-mcp-config", "--no-session-persistence",
