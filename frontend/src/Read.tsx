@@ -1,7 +1,7 @@
 // Read mode: the whole lesson as one long-form document, visuals inline and interactive.
 // Questions stay available, collapsed under "Test yourself". Sections can be read aloud, one after another,
-// with the sentence being read highlighted.
-import { useEffect, useState } from 'react'
+// with the sentence being read highlighted: the written text where a section has one, else its narration.
+import { useEffect, useMemo, useState } from 'react'
 import { narrate, stopNarration, useAudio } from './audio'
 import { Icon } from './icons'
 import type { Lesson, Question } from './lesson'
@@ -9,6 +9,7 @@ import { Markdown } from './Markdown'
 import { MenuItem, Narration, type Dock } from './Narration'
 import { QuestionCard, type Attempt } from './Question'
 import { ReadAlong } from './ReadAlong'
+import { spokenText } from './speech'
 import { Visual } from './Visual'
 import { Button, Panel } from './ui'
 
@@ -44,9 +45,10 @@ export function ReadView({
   // Reading aloud: a section, then the ones after it.
   const audio = useAudio()
   const live = audio.state !== 'idle' || audio.held !== null
-  const reading = live ? lesson.segments.findIndex((s) => s.narration === audio.spoken?.text) : -1
+  const speech = useMemo(() => lesson.segments.map((s) => (s.text?.trim() ? spokenText(s.text) : s.narration)), [lesson])
+  const reading = live ? speech.indexOf(audio.spoken?.text ?? '') : -1
   const readFrom = (i: number, sentence = 0): void =>
-    narrate(lesson.segments[i].narration, () => i + 1 < lesson.segments.length && readFrom(i + 1), sentence)
+    narrate(speech[i], () => i + 1 < lesson.segments.length && readFrom(i + 1), sentence)
   const looking = Math.max(0, lesson.segments.findIndex((s) => `s-${s.id}` === active))
   useEffect(() => stopNarration, [])
   const section = lesson.segments[reading >= 0 ? reading : looking]?.id ?? ''
@@ -122,15 +124,12 @@ export function ReadView({
             </div>
             <h2 className="-mt-3 text-2xl font-semibold tracking-tight">{s.title}</h2>
             {s.one_line && <Markdown className="text-lg text-fg/70">{s.one_line}</Markdown>}
-            {s.text?.trim() ? (
-              <Markdown className="text-[16px] leading-relaxed text-fg/90">{s.text}</Markdown>
-            ) : (
-              <ReadAlong
-                text={s.narration}
-                onPlayFrom={(sentence) => readFrom(i, sentence)}
-                className="text-[16px] leading-relaxed text-fg/90"
-              />
-            )}
+            <ReadAlong
+              text={s.text?.trim() ? s.text : s.narration}
+              speech={speech[i]}
+              onPlayFrom={(sentence) => readFrom(i, sentence)}
+              className="text-[16px] leading-relaxed text-fg/90"
+            />
             {s.visual.kind !== 'none' && (
               <Panel className="overflow-x-auto p-3 sm:p-6">
                 <Visual visual={s.visual} narration={s.narration} onState={(state) => onWidgetState(s.id, state)} />

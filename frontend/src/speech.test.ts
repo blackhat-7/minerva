@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { encodeWav, heard, hold, isResumePhrase, sentences, sentenceSplitter } from './speech'
+import { encodeWav, heard, hold, isResumePhrase, sentences, sentenceSplitter, spokenText, texToWords } from './speech'
 
 describe('sentenceSplitter', () => {
   it('emits sentences as soon as they are complete', () => {
@@ -93,5 +93,22 @@ describe('hold / heard', () => {
   it('reports what was heard, up to and including the interrupted sentence', () => {
     expect(heard({ sentences: s, index: 1 })).toBe('One. Two.')
     expect(heard({ sentences: s, index: 0 })).toBe('One.')
+  })
+})
+
+describe('spokenText', () => {
+  it('reads markdown as the page shows it, one block per line', () => {
+    const md = '**Paged KV cache.** Blocks of `16` tokens.\n\n- first item\n- second item\n\n```py\nx = 1\n```'
+    expect(spokenText(md)).toBe('Paged KV cache. Blocks of 16 tokens.\nfirst item\nsecond item')
+  })
+
+  it('reads math as words', () => {
+    expect(spokenText('Saves $2 \\times 70\\text{B} \\times 10^5 \\approx 14$ PFLOP.')).toBe(
+      'Saves 2 times 70B times 10 to the 5 is about 14 PFLOP.',
+    )
+    expect(texToWords('L(N,D) = E + \\frac{A}{N^{\\alpha}}, \\quad \\alpha\\approx 0.34')).toBe(
+      'L(N,D) equals E + A over N to the alpha, alpha is about 0.34',
+    )
+    expect(texToWords('T_{serve}')).toBe('T serve')
   })
 })

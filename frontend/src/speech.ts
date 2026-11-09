@@ -1,4 +1,10 @@
-// Pure helpers for voice: split streaming text into speakable sentences, and encode microphone audio as WAV.
+// Pure helpers for voice: split streaming text into speakable sentences, turn markdown into what the voice
+// reads, and encode microphone audio as WAV.
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import remarkParse from 'remark-parse'
+import { unified } from 'unified'
+import { dollarMath } from './dollarMath'
 
 const BOUNDARY = /[.!?…]+["'”’)\]]*(?=\s)|\n+/g
 const ABBREVIATIONS = new Set(['etc', 'vs', 'approx', 'cf', 'dr', 'mr', 'mrs', 'ms', 'prof', 'fig', 'eq', 'al', 'resp'])
@@ -79,6 +85,57 @@ export function sentenceSplitter() {
 export const sentences = (text: string) => {
   const s = sentenceSplitter()
   return [...s.push(text), ...s.flush()]
+}
+
+type MdNode = { type: string; value?: string; children?: MdNode[] }
+const BLOCKS = new Set(['paragraph', 'heading', 'listItem', 'blockquote', 'math', 'tableCell'])
+
+/** What the voice reads for markdown: the text as the page shows it, one block per line, math in words
+ * (see `texToWords`) and code blocks left out. ReadAlong finds these sentences on the page. */
+export function spokenText(markdown: string): string {
+  const parts: string[] = []
+  const walk = (n: MdNode) => {
+    if (n.type === 'code' || n.type === 'html') return
+    if (n.type === 'inlineMath' || n.type === 'math') parts.push(texToWords(n.value ?? ''))
+    else if (n.type === 'text' || n.type === 'inlineCode') parts.push(n.value ?? '')
+    else if (n.type === 'break') parts.push('\n')
+    n.children?.forEach(walk)
+    if (BLOCKS.has(n.type)) parts.push('\n')
+  }
+  walk(unified().use(remarkParse).use(remarkGfm).use(remarkMath).parse(dollarMath(markdown)) as MdNode)
+  return parts.join('').replace(/\n\s*/g, '\n').trim()
+}
+
+const TEX_WORDS: Record<string, string> = {
+  times: 'times', cdot: 'times', approx: 'is about', sim: 'about', propto: 'proportional to',
+  le: 'at most', leq: 'at most', ge: 'at least', geq: 'at least', ll: 'much less than', gg: 'much more than',
+  neq: 'is not', pm: 'plus or minus', to: 'to', rightarrow: 'to', infty: 'infinity', sum: 'the sum of',
+  ldots: '…', cdots: '…', left: '', right: '', quad: '', qquad: '',
+}
+
+/** TeX as words for the voice: "\frac{A}{N^{\alpha}}" -> "A over N to the alpha". Commands it doesn't know
+ * are read by name (\alpha -> alpha). */
+export function texToWords(tex: string): string {
+  let s = tex.trim()
+  for (let before = ''; before !== s; ) {
+    before = s // innermost braces first, so nested ones resolve on later passes
+    s = s
+      .replace(/\\(?:text|mathrm|mathbf|mathit|operatorname)\{([^{}]*)\}/g, '$1')
+      .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, ' $1 over $2 ')
+      .replace(/\\sqrt\{([^{}]*)\}/g, ' the square root of $1 ')
+      .replace(/\^\{([^{}]*)\}/g, ' to the $1 ')
+      .replace(/_\{([^{}]*)\}/g, ' $1 ')
+  }
+  return s
+    .replace(/\^(\w)/g, ' to the $1 ')
+    .replace(/_(\w)/g, ' $1 ')
+    .replace(/\\[,;:! ]|~/g, ' ')
+    .replace(/\\([a-zA-Z]+)/g, (_, name: string) => ` ${TEX_WORDS[name] ?? name} `)
+    .replace(/=/g, ' equals ')
+    .replace(/[{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/ ([,.;:)])/g, '$1')
+    .trim()
 }
 
 /** 16-bit PCM mono WAV from samples in [-1, 1]. */
