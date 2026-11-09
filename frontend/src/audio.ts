@@ -252,7 +252,7 @@ function bestVoice(): SpeechSynthesisVoice | null {
 }
 
 /** Microphone constraints for speech: the browser cancels our own playback and steadies the level. */
-const MIC: MediaTrackConstraints = {
+export const MIC: MediaTrackConstraints = {
   channelCount: 1,
   echoCancellation: true,
   noiseSuppression: true,

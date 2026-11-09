@@ -3,7 +3,7 @@
 import type { MicVAD } from '@ricky0123/vad-web'
 import { useSyncExternalStore } from 'react'
 import { api } from './api'
-import { audioContext, interrupt, record, unlock } from './audio'
+import { audioContext, interrupt, MIC, record, unlock } from './audio'
 import { errorMessage } from './hooks'
 import { encodeWav } from './speech'
 
@@ -137,6 +137,13 @@ export async function startListening(lesson: string) {
       baseAssetPath: '/vad/',
       onnxWASMBasePath: '/vad/',
       audioContext: context,
+      // vad-web's default pause stops the mic and resume asks for it again, so the browser prompts each
+      // time the learner switches apps. Keep the stream while hidden; ask again only if the system ended it.
+      pauseStream: async () => {},
+      resumeStream: async (stream) =>
+        stream.getAudioTracks().some((t) => t.readyState === 'live')
+          ? stream
+          : navigator.mediaDevices.getUserMedia({ audio: MIC }),
       redemptionMs: 900, // silence that ends a turn (default 1400): snappier, still allows a short pause
       ortConfig: (ort) => {
         ort.env.logLevel = 'error'
