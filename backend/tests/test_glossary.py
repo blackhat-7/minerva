@@ -21,9 +21,21 @@ def test_leaves_ordinary_words_and_unknowns():
     assert snap("attention over the decode step", TERMS) == "attention over the decode step"
 
 
+def test_never_adds_or_changes_a_version():
+    terms = ["DeepSeek-V3", "DeepSeek-R1", "GLM-4.5"]
+    assert snap("tell me about deepseek and deep seek", terms) == "tell me about deepseek and deep seek"
+    assert snap("deep seek v3 or deepseek v2", terms) == "DeepSeek-V3 or deepseek v2"
+
+
 def test_parenthesized_alias_and_case():
     assert snap("we use tp across eight GPUs", TERMS) == "we use TP across eight GPUs"
 
 
 def test_no_terms_is_identity():
     assert snap(HEARD, []) == HEARD
+
+
+def test_does_not_swallow_neighbouring_words():
+    terms = ["DeepSeek-V3", "PagedAttention"]
+    assert snap("DeepSeek-V3 or the rest", terms) == "DeepSeek-V3 or the rest"  # already right: left alone
+    assert snap("deepseek v3 or page detention is", terms) == "DeepSeek-V3 or PagedAttention is"

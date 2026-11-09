@@ -18,6 +18,10 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
+def _digits(s: str) -> str:
+    return re.sub(r"\D", "", s)
+
+
 def is_jargon(term: str) -> bool:
     """Acronyms, CamelCase and names with digits: the terms recognizers mishear."""
     return any(c.isdigit() for c in term) or sum(c.isupper() for c in term) >= 2
@@ -38,25 +42,33 @@ def snap(text: str, terms: list[str]) -> str:
     if not candidates:
         return text
     words = list(WORD.finditer(text))
-    replace: list[tuple[int, int, str]] = []  # (start, end, term)
-    taken = [False] * len(words)
-    for n in range(MAX_WORDS, 0, -1):  # longest windows first
+    # Every window that matches a term, as (score, words, first word, term).
+    matches: list[tuple[float, int, int, str]] = []
+    for n in range(1, MAX_WORDS + 1):
         for i in range(len(words) - n + 1):
-            if any(taken[i : i + n]):
-                continue
             # only windows of words separated by spaces or hyphens
             if any(text[words[j].end() : words[j + 1].start()] not in (" ", "-") for j in range(i, i + n - 1)):
                 continue
-            span = text[words[i].start() : words[i + n - 1].end()]
-            norm = _norm(span)
-            term = candidates.get(norm)
-            if term is None and len(norm) >= MIN_FUZZY_LEN:
-                best = max(candidates, key=lambda c: SequenceMatcher(None, norm, c).ratio())
-                if len(best) >= MIN_FUZZY_LEN and SequenceMatcher(None, norm, best).ratio() >= MIN_RATIO:
-                    term = candidates[best]
-            if term is not None and term != span:
-                replace.append((words[i].start(), words[i + n - 1].end(), term))
-                taken[i : i + n] = [True] * n
+            norm = _norm(text[words[i].start() : words[i + n - 1].end()])
+            if norm in candidates:
+                matches.append((1.0, n, i, candidates[norm]))
+            elif len(norm) >= MIN_FUZZY_LEN:
+                # Only terms with the same digits: "deepseek" must not become "DeepSeek-V3", it may be any version.
+                same = [c for c in candidates if len(c) >= MIN_FUZZY_LEN and _digits(c) == _digits(norm)]
+                best = max(same, key=lambda c: SequenceMatcher(None, norm, c).ratio(), default="")
+                if best and (ratio := SequenceMatcher(None, norm, best).ratio()) >= MIN_RATIO:
+                    matches.append((ratio, n, i, candidates[best]))
+    # Closest matches claim their words first, so "deep seek v3 or" loses to the exact "deep seek v3" and the "or"
+    # stays. Among equally close ones the longer wins ("Llama 3 70B" over "Llama 3").
+    replace: list[tuple[int, int, str]] = []  # (start, end, term)
+    taken = [False] * len(words)
+    for _, n, i, term in sorted(matches, key=lambda m: (-m[0], -m[1], m[2])):
+        if any(taken[i : i + n]):
+            continue
+        taken[i : i + n] = [True] * n
+        start, end = words[i].start(), words[i + n - 1].end()
+        if text[start:end] != term:
+            replace.append((start, end, term))
     for start, end, term in sorted(replace, reverse=True):
         text = text[:start] + term + text[end:]
     return text
